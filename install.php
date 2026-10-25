@@ -40,9 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!filter_var($values['admin_email'], FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Informe um e-mail válido para o administrador.';
     }
-    if (!is_readable($schemaFile)) {
-        $errors[] = 'Arquivo sql/schema.sql não encontrado.';
-    }
     if (!is_writable($root . '/includes')) {
         $errors[] = 'A pasta includes/ precisa ter permissão de escrita.';
     }
@@ -62,10 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($pdo && !$errors) {
-        try {
-            $pdo->exec((string) file_get_contents($schemaFile));
-        } catch (PDOException $ex) {
-            $errors[] = 'Erro ao criar as tabelas: ' . $ex->getMessage();
+        $check = $pdo->query("SHOW TABLES LIKE 'users'")->fetch();
+        if (!$check) {
+            $errors[] = 'As tabelas não foram encontradas. Importe o arquivo schema.sql no phpMyAdmin antes de instalar.';
         }
     }
 
@@ -111,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <h1>Instalação do bolão</h1>
 
     <?php if ($done): ?>
-        <p>Instalação concluída. As tabelas foram criadas e o arquivo de configuração foi gravado.</p>
+        <p>Instalação concluída. A conexão foi confirmada e o arquivo de configuração foi gravado.</p>
         <p>Agora abra o site, crie a conta com o e-mail <strong><?= h($values['admin_email']) ?></strong> e você terá acesso à administração.</p>
         <p><a href="index.php">Ir para o site</a></p>
         <?php if (file_exists(__FILE__)): ?>

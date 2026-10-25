@@ -6,12 +6,15 @@ Qualquer usuário cadastrado pode criar um bolão, escolher as ligas e as regras
 
 ## Instalação na Hostinger
 
-1. **Crie o banco** no hPanel, em *Bancos de dados → Gerenciamento*. Anote o nome completo (com o prefixo, ex.: `u329075197_bolao`), o usuário e a senha.
-2. **Envie o projeto:** no Gerenciador de Arquivos, entre em `public_html`, envie o arquivo `bolao-hostinger.zip` e extraia. Os arquivos devem ficar direto dentro de `public_html`, sem uma pasta extra.
-3. **Instale:** abra `seusite.com/install.php`, preencha os dados do banco e o e-mail do administrador, e clique em *Instalar*. O instalador cria as tabelas, grava o `includes/config.php` e apaga a si mesmo.
-4. **Crie sua conta** no site com o mesmo e-mail do administrador. Essa conta cadastra jogos e lança resultados.
+São dois arquivos: o site (`bolao-site.zip`) e o banco (`schema.sql`).
 
-Se o instalador não apagar `install.php` sozinho, apague o arquivo pelo gerenciador de arquivos.
+1. **Crie o banco** no hPanel, em *Bancos de dados → Gerenciamento*. Anote o nome completo (ex.: `u329075197_bolao`), o usuário e a senha.
+2. **Importe o `schema.sql`** no phpMyAdmin: selecione o banco, abra a aba *Importar*, escolha o arquivo e clique em *Executar*.
+3. **Envie o site:** no Gerenciador de Arquivos, entre em `public_html`, envie o `bolao-site.zip` e extraia. Os arquivos devem ficar direto dentro de `public_html`.
+4. **Instale:** abra `seusite.com/install.php`, preencha os dados do banco e o e-mail do administrador, e clique em *Instalar*. Ele grava o `includes/config.php` e tenta se apagar.
+5. **Crie sua conta** no site com o mesmo e-mail do administrador.
+
+Se o `install.php` não se apagar sozinho, apague pelo gerenciador de arquivos.
 
 ## Estrutura
 
@@ -19,7 +22,6 @@ Se o instalador não apagar `install.php` sozinho, apague o arquivo pelo gerenci
 index.php, login.php, ...  Páginas do site
 install.php                Instalador (se apaga após usar)
 includes/                  Regras, conexão e sessão (bloqueado pela internet)
-sql/schema.sql             Tabelas do banco (bloqueado pela internet)
 assets/                    CSS
 ```
 
