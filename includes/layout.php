@@ -1,7 +1,7 @@
 <?php
 // Cabeçalho e rodapé comuns a todas as páginas.
 
-function page_start(string $title, ?array $user = null, string $width = 'card'): void
+function page_start(string $title, ?array $user = null, string $width = 'wrap'): void
 {
     ?>
 <!doctype html>
@@ -9,9 +9,12 @@ function page_start(string $title, ?array $user = null, string $width = 'card'):
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= e($title) ?> - <?= e(SITE_NAME) ?></title>
+    <meta name="theme-color" content="#09111d">
+    <title><?= e($title) ?> · <?= e(SITE_NAME) ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="assets/style.css">
-    <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>
 <header class="topbar">
@@ -37,7 +40,7 @@ function alert_box(array $errors): void
     if (!$errors) {
         return;
     }
-    echo '<div class="alert">';
+    echo '<div class="alert" role="alert">';
     foreach ($errors as $error) {
         echo '<p>' . e($error) . '</p>';
     }
@@ -46,5 +49,5 @@ function alert_box(array $errors): void
 
 function notice(string $text): void
 {
-    echo '<div class="notice">' . e($text) . '</div>';
+    echo '<div class="notice" role="status">' . e($text) . '</div>';
 }

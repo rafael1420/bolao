@@ -14,28 +14,38 @@ $stmt = db()->prepare(
 $stmt->execute([$user['id']]);
 $groups = $stmt->fetchAll();
 
-page_start('Início', $user, 'wrap');
+page_start('Seus bolões', $user, 'wrap');
 ?>
-<h1>Olá, <?= e($user['name']) ?>!</h1>
-
-<div class="actions">
-    <a class="btn" href="create_group.php">+ Criar bolão</a>
-    <a class="btn secondary" href="join_group.php">Entrar com código</a>
+<div class="page-head">
+    <div>
+        <h1>Seus bolões</h1>
+        <p class="muted-left">Olá, <?= e($user['name']) ?>.</p>
+    </div>
+    <div class="actions">
+        <a class="btn" href="create_group.php">Criar bolão</a>
+        <a class="btn secondary" href="join_group.php">Entrar com código</a>
+    </div>
 </div>
-
-<h2>Meus bolões</h2>
 
 <?php if (!$groups): ?>
-    <p class="muted-left">Você ainda não participa de nenhum bolão. Crie um ou entre com um código de convite.</p>
+    <div class="empty">
+        <p>Você ainda não está em nenhum bolão.</p>
+        <p class="muted-left">Crie um para começar, ou peça o código de convite para um amigo.</p>
+    </div>
+<?php else: ?>
+    <div class="group-list">
+        <?php foreach ($groups as $group): ?>
+            <a class="group-card" href="group.php?id=<?= (int) $group['id'] ?>">
+                <span class="group-name"><?= e($group['name']) ?></span>
+                <span class="muted-left">
+                    <?= (int) $group['members'] ?> <?= (int) $group['members'] === 1 ? 'participante' : 'participantes' ?>
+                    <?php if ((int) $group['owner_id'] === (int) $user['id']): ?>
+                        <br>Você organiza este bolão
+                    <?php endif; ?>
+                </span>
+            </a>
+        <?php endforeach; ?>
+    </div>
 <?php endif; ?>
-
-<div class="group-list">
-    <?php foreach ($groups as $group): ?>
-        <a class="panel group-card" href="group.php?id=<?= (int) $group['id'] ?>">
-            <strong><?= e($group['name']) ?></strong>
-            <span class="muted-left"><?= (int) $group['members'] ?> membro(s)<?= (int) $group['owner_id'] === (int) $user['id'] ? ' · você é o organizador' : '' ?></span>
-        </a>
-    <?php endforeach; ?>
-</div>
 <?php
 page_end();

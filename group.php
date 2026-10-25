@@ -9,12 +9,10 @@ $isOwner = (int) $group['owner_id'] === (int) $user['id'];
 $leagueIds = group_league_ids($groupId);
 $in = placeholders($leagueIds);
 
-// Ligas do grupo, para exibir
 $stmt = db()->prepare("SELECT name FROM leagues WHERE id IN ($in) ORDER BY name");
 $stmt->execute($leagueIds);
 $leagueNames = array_column($stmt->fetchAll(), 'name');
 
-// Rodadas disponíveis
 $stmt = db()->prepare("SELECT DISTINCT round FROM matches WHERE league_id IN ($in) ORDER BY round");
 $stmt->execute($leagueIds);
 $rounds = array_map('intval', array_column($stmt->fetchAll(), 'round'));
@@ -30,7 +28,6 @@ if ($round <= 0) {
     }
 }
 
-// Jogos da rodada
 $stmt = db()->prepare(
     "SELECT m.*, l.name AS league_name
      FROM matches m
@@ -41,7 +38,6 @@ $stmt = db()->prepare(
 $stmt->execute([...$leagueIds, $round]);
 $matches = $stmt->fetchAll();
 
-// Meus palpites neste grupo
 $stmt = db()->prepare('SELECT match_id, home_pred, away_pred, points FROM predictions WHERE user_id = ? AND group_id = ?');
 $stmt->execute([$user['id'], $groupId]);
 $mine = [];
@@ -50,6 +46,7 @@ foreach ($stmt->fetchAll() as $p) {
 }
 
 $ranking = group_ranking($groupId);
+
 $hasOpenMatch = false;
 foreach ($matches as $m) {
     if (is_open($m)) {
@@ -65,14 +62,16 @@ $nextRound = $rounds && $round < max($rounds) ? $round + 1 : null;
 page_start($group['name'], $user, 'wrap');
 ?>
 <div class="page-head">
-    <h1><?= e($group['name']) ?></h1>
+    <div>
+        <h1><?= e($group['name']) ?></h1>
+        <p class="muted-left"><?= e(implode(', ', $leagueNames)) ?></p>
+    </div>
     <div class="actions">
         <?php if ($isOwner): ?>
             <a class="btn secondary" href="members.php?id=<?= $groupId ?>">Membros</a>
             <a class="btn secondary" href="group_settings.php?id=<?= $groupId ?>">Configurar</a>
         <?php else: ?>
-            <form method="post" action="leave_group.php" class="inline"
-                  onsubmit="return confirm('Sair deste bolão?');">
+            <form method="post" action="leave_group.php" class="inline" onsubmit="return confirm('Sair deste bolão?');">
                 <?= csrf_field() ?>
                 <input type="hidden" name="group_id" value="<?= $groupId ?>">
                 <button type="submit" class="btn secondary">Sair do bolão</button>
@@ -86,34 +85,41 @@ page_start($group['name'], $user, 'wrap');
 <?php endif; ?>
 
 <?php if (isset($_GET['saved'])): ?>
-    <?php notice('Alterações salvas.'); ?>
+    <?php notice('Tudo salvo.'); ?>
 <?php endif; ?>
 
 <div class="grid-2">
     <section class="panel">
         <h2>Convite</h2>
         <p>Código: <strong><?= e($group['invite_code']) ?></strong></p>
-        <p class="small-text">Link: <input type="text" readonly value="<?= e($inviteUrl) ?>" onclick="this.select()"></p>
-        <p class="muted-left"><?= $group['password_hash'] ? 'Este bolão tem senha.' : 'Este bolão não tem senha.' ?></p>
+        <label>Link para os amigos
+            <input type="text" readonly value="<?= e($inviteUrl) ?>" onclick="this.select()">
+        </label>
+        <p class="muted-left small-text"><?= $group['password_hash'] ? 'Este bolão pede senha para entrar.' : 'Este bolão não pede senha.' ?></p>
     </section>
 
     <section class="panel">
-        <h2>Regras</h2>
-        <p><strong>Ligas:</strong> <?= e(implode(', ', $leagueNames)) ?></p>
-        <p>Placar exato: <strong><?= (int) $group['exact_points'] ?></strong> ·
-           Vencedor ou empate: <strong><?= (int) $group['winner_points'] ?></strong> ·
-           Saldo de gols: <strong><?= (int) $group['goal_diff_points'] ?></strong></p>
+        <h2>Pontuação</h2>
+        <p>Placar exato: <strong><?= (int) $group['exact_points'] ?></strong> pontos</p>
+        <p>Vencedor ou empate: <strong><?= (int) $group['winner_points'] ?></strong> pontos</p>
+        <p>Saldo de gols certo: <strong>+<?= (int) $group['goal_diff_points'] ?></strong> pontos</p>
     </section>
 </div>
 
 <section class="panel">
     <div class="round-nav">
         <?php if ($prevRound): ?>
-            <a class="btn secondary" href="group.php?id=<?= $groupId ?>&round=<?= $prevRound ?>">&larr; Rodada <?= $prevRound ?></a>
+            <a class="btn secondary small" href="group.php?id=<?= $groupId ?>&amp;round=<?= $prevRound ?>">Rodada <?= $prevRound ?></a>
+        <?php else: ?>
+            <span></span>
         <?php endif; ?>
-        <strong>Rodada <?= $round ?></strong>
+
+        <span class="round-title">Rodada <?= $round ?></span>
+
         <?php if ($nextRound): ?>
-            <a class="btn secondary" href="group.php?id=<?= $groupId ?>&round=<?= $nextRound ?>">Rodada <?= $nextRound ?> &rarr;</a>
+            <a class="btn secondary small" href="group.php?id=<?= $groupId ?>&amp;round=<?= $nextRound ?>">Rodada <?= $nextRound ?></a>
+        <?php else: ?>
+            <span></span>
         <?php endif; ?>
     </div>
 
@@ -125,59 +131,66 @@ page_start($group['name'], $user, 'wrap');
             <input type="hidden" name="group_id" value="<?= $groupId ?>">
             <input type="hidden" name="round" value="<?= $round ?>">
 
-            <div class="table-wrap">
-                <table class="tbl">
-                    <thead>
-                        <tr>
-                            <th>Data</th>
-                            <th>Jogo</th>
-                            <th>Seu palpite</th>
-                            <th>Resultado</th>
-                            <th>Pontos</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($matches as $m):
-                        $id = (int) $m['id'];
-                        $pred = $mine[$id] ?? null;
-                        $open = is_open($m);
-                        $finished = $m['home_score'] !== null;
-                    ?>
-                        <tr>
-                            <td><?= e(fmt_kickoff($m['kickoff_at'])) ?></td>
-                            <td>
-                                <?= e($m['home_team']) ?> x <?= e($m['away_team']) ?>
-                                <div class="muted-left small-text"><?= e($m['league_name']) ?></div>
-                            </td>
-                            <td class="center">
-                                <?php if ($open): ?>
-                                    <input class="score" type="number" min="0" max="30"
-                                           name="preds[<?= $id ?>][home]"
-                                           value="<?= $pred ? (int) $pred['home_pred'] : '' ?>">
-                                    <span>x</span>
-                                    <input class="score" type="number" min="0" max="30"
-                                           name="preds[<?= $id ?>][away]"
-                                           value="<?= $pred ? (int) $pred['away_pred'] : '' ?>">
-                                <?php else: ?>
-                                    <?= $pred ? (int) $pred['home_pred'] . ' x ' . (int) $pred['away_pred'] : '-' ?>
-                                    <div class="small-text muted-left">Fechado</div>
-                                <?php endif; ?>
-                            </td>
-                            <td class="center">
-                                <?= $finished ? (int) $m['home_score'] . ' x ' . (int) $m['away_score'] : 'a definir' ?>
-                            </td>
-                            <td class="center">
-                                <?= ($pred && $pred['points'] !== null) ? (int) $pred['points'] : '-' ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
+            <ul class="matches">
+            <?php foreach ($matches as $m):
+                $id = (int) $m['id'];
+                $pred = $mine[$id] ?? null;
+                $open = is_open($m);
+                $finished = $m['home_score'] !== null;
+                $hasPred = $pred !== null;
+            ?>
+                <li class="match">
+                    <div class="match-teams">
+                        <span class="match-league"><?= e($m['league_name']) ?></span>
+                        <span class="match-when"><?= e(fmt_kickoff($m['kickoff_at'])) ?></span>
+                        <p class="team-line">
+                            <span><?= e($m['home_team']) ?></span>
+                            <span class="vs">×</span>
+                            <span><?= e($m['away_team']) ?></span>
+                        </p>
+                    </div>
+
+                    <div class="match-pick">
+                        <?php if ($open): ?>
+                            <div class="pick">
+                                <label class="visually-hidden" for="h<?= $id ?>"><?= e($m['home_team']) ?></label>
+                                <input id="h<?= $id ?>" class="score" type="number" inputmode="numeric" min="0" max="30"
+                                       name="preds[<?= $id ?>][home]"
+                                       value="<?= $hasPred ? (int) $pred['home_pred'] : '' ?>">
+                                <span class="sep" aria-hidden="true">:</span>
+                                <label class="visually-hidden" for="a<?= $id ?>"><?= e($m['away_team']) ?></label>
+                                <input id="a<?= $id ?>" class="score" type="number" inputmode="numeric" min="0" max="30"
+                                       name="preds[<?= $id ?>][away]"
+                                       value="<?= $hasPred ? (int) $pred['away_pred'] : '' ?>">
+                            </div>
+                        <?php elseif ($hasPred): ?>
+                            <span class="closed-pick"><?= (int) $pred['home_pred'] ?> : <?= (int) $pred['away_pred'] ?></span>
+                            <span class="lock-note">Palpite fechado</span>
+                        <?php else: ?>
+                            <span class="closed-pick none">Sem palpite</span>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="match-status">
+                        <span class="match-result">
+                            <?php if ($finished): ?>
+                                Resultado <strong><?= (int) $m['home_score'] ?> : <?= (int) $m['away_score'] ?></strong>
+                            <?php else: ?>
+                                Ainda não jogou
+                            <?php endif; ?>
+                        </span>
+                        <?php $pts = ($hasPred && $pred['points'] !== null) ? (int) $pred['points'] : null; ?>
+                        <span class="points<?= $pts ? ' scored' : '' ?>" aria-label="<?= $pts === null ? 'sem pontos ainda' : $pts . ' pontos' ?>"><?= $pts === null ? '–' : $pts ?></span>
+                    </div>
+                </li>
+            <?php endforeach; ?>
+            </ul>
 
             <?php if ($hasOpenMatch): ?>
-                <button type="submit" class="btn full">Salvar palpites</button>
-                <p class="muted-left small-text">Os palpites podem ser alterados até o início de cada jogo.</p>
+                <div class="form-foot">
+                    <button type="submit" class="full">Salvar palpites</button>
+                    <p class="muted-left small-text center">Dá para mudar até o início de cada jogo.</p>
+                </div>
             <?php endif; ?>
         </form>
     <?php endif; ?>
@@ -188,14 +201,14 @@ page_start($group['name'], $user, 'wrap');
     <div class="table-wrap">
         <table class="tbl">
             <thead>
-                <tr><th>#</th><th>Participante</th><th>Pontos</th></tr>
+                <tr><th class="pos">#</th><th>Participante</th><th class="pts">Pontos</th></tr>
             </thead>
             <tbody>
             <?php foreach ($ranking as $i => $row): ?>
                 <tr class="<?= (int) $row['id'] === (int) $user['id'] ? 'me' : '' ?>">
-                    <td><?= $i + 1 ?></td>
-                    <td><?= e($row['name']) ?></td>
-                    <td><?= (int) $row['total'] ?></td>
+                    <td class="pos"><?= $i + 1 ?></td>
+                    <td><?= e($row['name']) ?><?= (int) $row['id'] === (int) $user['id'] ? ' <span class="muted-left small-text">(você)</span>' : '' ?></td>
+                    <td class="pts"><?= (int) $row['total'] ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

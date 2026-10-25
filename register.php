@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/app.php';
 
 if (current_user()) {
     redirect('index.php');
@@ -24,17 +24,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Informe um e-mail válido.';
     }
     if (strlen($password) < 8) {
-        $errors[] = 'A senha deve ter pelo menos 8 caracteres.';
+        $errors[] = 'A senha precisa ter pelo menos 8 caracteres.';
     }
     if ($password !== $confirm) {
-        $errors[] = 'As senhas não conferem.';
+        $errors[] = 'As senhas não são iguais.';
     }
 
     if (!$errors) {
         $stmt = db()->prepare('SELECT id FROM users WHERE email = ?');
         $stmt->execute([$email]);
         if ($stmt->fetch()) {
-            $errors[] = 'Este e-mail já está cadastrado.';
+            $errors[] = 'Já existe uma conta com este e-mail. Entre com ele ou use outro.';
         }
     }
 
@@ -46,50 +46,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php');
     }
 }
+
+page_start('Criar conta', null, 'card');
 ?>
-<!doctype html>
-<html lang="pt-BR">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Criar conta - <?= e(SITE_NAME) ?></title>
-    <link rel="stylesheet" href="assets/style.css">
-</head>
-<body>
-<main class="card">
+<section class="auth-hero">
     <h1>Criar conta</h1>
+    <p class="lead">Leva menos de um minuto. Depois é só criar um bolão ou entrar com o código de um amigo.</p>
+</section>
 
-    <?php if ($errors): ?>
-        <div class="alert">
-            <?php foreach ($errors as $error): ?>
-                <p><?= e($error) ?></p>
-            <?php endforeach; ?>
-        </div>
-    <?php endif; ?>
+<?php alert_box($errors); ?>
 
-    <form method="post" action="register.php">
-        <?= csrf_field() ?>
+<form method="post" action="register.php" class="panel auth-form">
+    <?= csrf_field() ?>
 
-        <label>Nome
-            <input type="text" name="name" value="<?= e($old['name']) ?>" maxlength="100" required>
-        </label>
+    <label>Nome
+        <input type="text" name="name" value="<?= e($old['name']) ?>" maxlength="100" autocomplete="name" required>
+    </label>
 
-        <label>E-mail
-            <input type="email" name="email" value="<?= e($old['email']) ?>" maxlength="150" required>
-        </label>
+    <label>E-mail
+        <input type="email" name="email" value="<?= e($old['email']) ?>" maxlength="150" autocomplete="email" required>
+    </label>
 
-        <label>Senha (mínimo 8 caracteres)
-            <input type="password" name="password" minlength="8" required>
-        </label>
+    <label>Senha (mínimo de 8 caracteres)
+        <input type="password" name="password" minlength="8" autocomplete="new-password" required>
+    </label>
 
-        <label>Confirmar senha
-            <input type="password" name="password_confirm" minlength="8" required>
-        </label>
+    <label>Confirmar senha
+        <input type="password" name="password_confirm" minlength="8" autocomplete="new-password" required>
+    </label>
 
-        <button type="submit">Criar conta</button>
-    </form>
+    <button type="submit" class="full">Criar conta</button>
+</form>
 
-    <p class="muted">Já tem conta? <a href="login.php">Entrar</a></p>
-</main>
-</body>
-</html>
+<p class="muted">Já tem conta? <a href="login.php">Entrar</a></p>
+<?php
+page_end();

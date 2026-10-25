@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/app.php';
 
 if (current_user()) {
     redirect('index.php');
@@ -26,38 +26,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $error = 'E-mail ou senha incorretos.';
 }
+
+page_start('Entrar', null, 'card');
 ?>
-<!doctype html>
-<html lang="pt-BR">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Entrar - <?= e(SITE_NAME) ?></title>
-    <link rel="stylesheet" href="assets/style.css">
-</head>
-<body>
-<main class="card">
-    <h1>Entrar</h1>
+<section class="auth-hero">
+    <h1 class="wordmark"><?= e(SITE_NAME) ?></h1>
+    <div class="scoreboard" aria-hidden="true"><span>2</span><span class="sep">:</span><span>1</span></div>
+    <p class="lead">Palpites rodada a rodada e um ranking só com os seus amigos.</p>
+</section>
 
-    <?php if ($error): ?>
-        <div class="alert"><p><?= e($error) ?></p></div>
-    <?php endif; ?>
+<?php alert_box($error ? [$error] : []); ?>
 
-    <form method="post" action="login.php">
-        <?= csrf_field() ?>
+<form method="post" action="login.php" class="panel auth-form">
+    <?= csrf_field() ?>
 
-        <label>E-mail
-            <input type="email" name="email" value="<?= e($email) ?>" required>
-        </label>
+    <label>E-mail
+        <input type="email" name="email" value="<?= e($email) ?>" autocomplete="email" required>
+    </label>
 
-        <label>Senha
-            <input type="password" name="password" required>
-        </label>
+    <label>Senha
+        <input type="password" name="password" autocomplete="current-password" required>
+    </label>
 
-        <button type="submit">Entrar</button>
-    </form>
+    <button type="submit" class="full">Entrar</button>
+</form>
 
-    <p class="muted">Ainda não tem conta? <a href="register.php">Criar conta</a></p>
-</main>
-</body>
-</html>
+<p class="muted">Ainda não tem conta? <a href="register.php">Criar conta</a></p>
+<?php
+page_end();
