@@ -5,8 +5,6 @@ require_once __DIR__ . '/layout.php';
 
 date_default_timezone_set('America/Sao_Paulo');
 
-// E-mail da conta que pode cadastrar jogos e resultados.
-define('ADMIN_EMAIL', 'rafael.gomez2007@gmail.com');
 
 function is_admin(?array $user): bool
 {

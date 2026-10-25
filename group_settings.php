@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../includes/app.php';
+require_once __DIR__ . '/includes/app.php';
 
 $user = require_login();
 $groupId = (int) ($_GET['id'] ?? $_POST['group_id'] ?? 0);

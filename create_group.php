@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../includes/app.php';
+require_once __DIR__ . '/includes/app.php';
 
 $user = require_login();
 $leagues = db()->query('SELECT id, name FROM leagues ORDER BY name')->fetchAll();

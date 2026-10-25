@@ -1,35 +1,33 @@
 # Bolão
 
-Site de bolão de futebol em PHP e MySQL, pensado para hospedagem compartilhada (Hostinger, plano PHP/HTML).
+Site de bolão de futebol em PHP e MySQL, para hospedagem compartilhada (Hostinger, plano PHP/HTML).
 
 Qualquer usuário cadastrado pode criar um bolão, escolher as ligas e as regras de pontuação, e convidar pessoas por código, link ou senha. Não há apostas em dinheiro nem prêmios.
+
+## Instalação na Hostinger
+
+1. **Crie o banco** no hPanel, em *Bancos de dados → Gerenciamento*. Anote o nome completo (com o prefixo, ex.: `u329075197_bolao`), o usuário e a senha.
+2. **Envie o projeto:** no Gerenciador de Arquivos, entre em `public_html`, envie o arquivo `bolao-hostinger.zip` e extraia. Os arquivos devem ficar direto dentro de `public_html`, sem uma pasta extra.
+3. **Instale:** abra `seusite.com/install.php`, preencha os dados do banco e o e-mail do administrador, e clique em *Instalar*. O instalador cria as tabelas, grava o `includes/config.php` e apaga a si mesmo.
+4. **Crie sua conta** no site com o mesmo e-mail do administrador. Essa conta cadastra jogos e lança resultados.
+
+Se o instalador não apagar `install.php` sozinho, apague o arquivo pelo gerenciador de arquivos.
 
 ## Estrutura
 
 ```
-sql/schema.sql          Tabelas do banco
-includes/config.php     Dados de conexão (não vai para o GitHub)
-includes/app.php        Regras do bolão: pontuação, membros, ranking
-includes/auth.php       Sessão, login, proteção CSRF
-includes/db.php         Conexão com o banco
-includes/layout.php     Cabeçalho e rodapé das páginas
-public/                 Páginas. O conteúdo desta pasta vai para public_html/
-public/assets/          CSS
+index.php, login.php, ...  Páginas do site
+install.php                Instalador (se apaga após usar)
+includes/                  Regras, conexão e sessão (bloqueado pela internet)
+sql/schema.sql             Tabelas do banco (bloqueado pela internet)
+assets/                    CSS
 ```
 
-## Instalação na Hostinger
+## Uso
 
-1. No hPanel, crie um banco MySQL e anote nome, usuário e senha.
-2. Crie o arquivo `includes/config.php` no servidor, com as constantes `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASS`. Ele não vai para o GitHub, porque contém a senha do banco.
-3. No phpMyAdmin, importe `sql/schema.sql`.
-4. Envie a pasta `includes/` para o mesmo nível de `public_html/`, e o conteúdo de `public/` para dentro de `public_html/`.
-5. Confira o e-mail de administrador em `includes/app.php` (`ADMIN_EMAIL`). Essa conta cadastra jogos e resultados.
-
-## Uso básico
-
-- **Administração** (`admin_matches.php`): cadastre ligas e jogos, e lance os placares finais. Ao salvar um placar, os pontos dos palpites são recalculados.
-- **Organizador do bolão**: pode alterar nome, senha, ligas e pontuação em *Configurar*, e remover participantes em *Membros*.
-- **Participantes**: fazem palpites até o início de cada jogo e acompanham o ranking.
+- **Administração** (`admin_matches.php`): cadastre ligas e jogos, e lance os placares finais. Ao salvar um placar, os pontos são recalculados.
+- **Organizador do bolão:** altera nome, senha, ligas e pontuação em *Configurar*, e remove participantes em *Membros*.
+- **Participantes:** fazem palpites até o início de cada jogo e acompanham o ranking.
 
 ## Pontuação padrão
 
