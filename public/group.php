@@ -66,13 +66,27 @@ page_start($group['name'], $user, 'wrap');
 ?>
 <div class="page-head">
     <h1><?= e($group['name']) ?></h1>
-    <?php if ($isOwner): ?>
-        <a class="btn secondary" href="group_settings.php?id=<?= $groupId ?>">Configurar</a>
-    <?php endif; ?>
+    <div class="actions">
+        <?php if ($isOwner): ?>
+            <a class="btn secondary" href="members.php?id=<?= $groupId ?>">Membros</a>
+            <a class="btn secondary" href="group_settings.php?id=<?= $groupId ?>">Configurar</a>
+        <?php else: ?>
+            <form method="post" action="leave_group.php" class="inline"
+                  onsubmit="return confirm('Sair deste bolão?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="group_id" value="<?= $groupId ?>">
+                <button type="submit" class="btn secondary">Sair do bolão</button>
+            </form>
+        <?php endif; ?>
+    </div>
 </div>
 
+<?php if (($_GET['error'] ?? '') === 'owner'): ?>
+    <?php alert_box(['O organizador não pode sair do próprio bolão.']); ?>
+<?php endif; ?>
+
 <?php if (isset($_GET['saved'])): ?>
-    <?php notice('Palpites salvos.'); ?>
+    <?php notice('Alterações salvas.'); ?>
 <?php endif; ?>
 
 <div class="grid-2">
