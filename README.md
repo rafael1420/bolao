@@ -53,8 +53,9 @@ assets/                    CSS
 ## Uso
 
 - **Administração** (`admin_matches.php`): cadastre ligas e jogos, e lance os placares finais. Ao salvar um placar, os pontos são recalculados.
-- **Organizador do bolão:** altera nome, senha, ligas e pontuação em *Configurar*, e remove participantes em *Membros*.
-- **Participantes:** fazem palpites até o início de cada jogo e acompanham o ranking.
+- **Conta** (`perfil.php`): qualquer usuário troca o próprio nome (que aparece no ranking) e a senha, informando a senha atual.
+- **Organizador do bolão** (*Configurar*): altera nome, senha de entrada, ligas e pontuação; gera um novo código de convite (o link antigo deixa de funcionar); e exclui o bolão, digitando o nome exato para confirmar. Em *Membros*, remove participantes.
+- **Participantes:** fazem palpites até o início de cada jogo, acompanham o ranking e podem sair do bolão.
 
 ## Pontuação padrão
 
@@ -69,5 +70,5 @@ Cada bolão pode alterar esses valores (de 0 a 20).
 ## Ainda não existe
 
 - Importação automática de jogos e resultados por API
-- Recuperação de senha
-- Edição de perfil
+- Recuperação de senha ("esqueci minha senha")
+- Transferência do organizador para outro participante
