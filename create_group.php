@@ -5,10 +5,11 @@ $user = require_login();
 $leagues = db()->query('SELECT id, name FROM leagues ORDER BY name')->fetchAll();
 $validLeagueIds = array_map('intval', array_column($leagues, 'id'));
 
-$errors = [];
+$errors = [];   // campo => mensagem
+$summary = [];
 $form = [
     'name' => '',
-    'leagues' => [],
+    'leagues' => count($leagues) === 1 ? [(int) $leagues[0]['id']] : [],
     'exact' => 5,
     'winner' => 3,
     'diff' => 1,
@@ -32,19 +33,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     ];
 
     if ($name === '' || mb_strlen($name) > 100) {
-        $errors[] = 'Informe um nome de até 100 caracteres.';
+        $errors['name'] = 'O nome precisa ter entre 1 e 100 letras.';
     }
     if (!$selected) {
-        $errors[] = 'Escolha pelo menos uma liga.';
+        $errors['leagues'] = 'Marque pelo menos uma liga para o bolão.';
     }
-    foreach ([$form['exact'], $form['winner'], $form['diff']] as $points) {
+    foreach (['exact_points' => $form['exact'], 'winner_points' => $form['winner'], 'goal_diff_points' => $form['diff']] as $field => $points) {
         if ($points < 0 || $points > 20) {
-            $errors[] = 'Os pontos devem ficar entre 0 e 20.';
+            $errors['points'] = 'Os pontos devem ficar entre 0 e 20.';
             break;
         }
     }
     if ($password !== '' && strlen($password) < 4) {
-        $errors[] = 'A senha do grupo deve ter pelo menos 4 caracteres (ou deixe em branco).';
+        $errors['password'] = 'A senha do bolão precisa ter pelo menos 4 caracteres, ou fique em branco.';
     }
 
     if (!$errors) {
@@ -76,54 +77,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
+        flash_set('welcome', true);
         redirect('group.php?id=' . $groupId);
     }
+    $summary = array_values($errors);
 }
 
-page_start('Criar bolão', $user);
+$exampleText = points_example([
+    'exact_points' => $form['exact'],
+    'winner_points' => $form['winner'],
+    'goal_diff_points' => $form['diff'],
+]);
+
+page_start('Novo bolão', $user, 'wrap', 'inicio');
 ?>
-<h1>Criar bolão</h1>
+<div class="page-head">
+    <div>
+        <h1 class="h-page">Novo bolão</h1>
+        <p class="lede">Você vira o organizador e pode mudar as regras depois.</p>
+    </div>
+</div>
 
-<?php alert_box($errors); ?>
+<?php alert_box($summary); ?>
 
-<form method="post" action="create_group.php">
+<form method="post" action="create_group.php" class="panel stack-lg">
     <?= csrf_field() ?>
 
-    <label>Nome do bolão
-        <input type="text" name="name" value="<?= e($form['name']) ?>" maxlength="100" required>
-    </label>
+    <?php field('name', 'Nome do bolão', ['value' => $form['name'], 'maxlength' => 100, 'required' => true,
+        'error' => $errors['name'] ?? null, 'autofocus' => isset($errors['name'])]); ?>
 
-    <label>Senha para entrar (opcional)
-        <input type="password" name="password" placeholder="Deixe em branco para entrar só com o link">
-    </label>
+    <?php field('password', 'Senha para entrar (opcional)', ['type' => 'password', 'autocomplete' => 'new-password',
+        'help' => 'Sem senha, quem tiver o link entra direto.', 'error' => $errors['password'] ?? null,
+        'autofocus' => isset($errors['password'])]); ?>
 
-    <fieldset>
+    <fieldset class="fieldset<?= isset($errors['leagues']) ? ' is-invalid' : '' ?>">
         <legend>Ligas</legend>
+        <?php if (isset($errors['leagues'])): ?>
+            <p class="field-error"><?= e($errors['leagues']) ?></p>
+        <?php endif; ?>
         <?php foreach ($leagues as $league): ?>
-            <label class="check">
-                <input type="checkbox" name="leagues[]" value="<?= (int) $league['id'] ?>"
-                    <?= in_array((int) $league['id'], $form['leagues'], true) ? 'checked' : '' ?>>
-                <?= e($league['name']) ?>
-            </label>
+            <?php check_option('leagues[]', (string) $league['id'], $league['name'],
+                in_array((int) $league['id'], $form['leagues'], true), 'liga-' . $league['id']); ?>
         <?php endforeach; ?>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="fieldset<?= isset($errors['points']) ? ' is-invalid' : '' ?>">
         <legend>Pontuação</legend>
         <div class="grid3">
-            <label>Placar exato
-                <input type="number" name="exact_points" min="0" max="20" value="<?= (int) $form['exact'] ?>">
-            </label>
-            <label>Vencedor ou empate
-                <input type="number" name="winner_points" min="0" max="20" value="<?= (int) $form['winner'] ?>">
-            </label>
-            <label>Saldo de gols
-                <input type="number" name="goal_diff_points" min="0" max="20" value="<?= (int) $form['diff'] ?>">
-            </label>
+            <?php field('exact_points', 'Placar exato', ['type' => 'number', 'min' => 0, 'max' => 20, 'inputmode' => 'numeric',
+                'value' => $form['exact'], 'id' => 'p-exact', 'error' => null]); ?>
+            <?php field('winner_points', 'Vencedor ou empate', ['type' => 'number', 'min' => 0, 'max' => 20, 'inputmode' => 'numeric',
+                'value' => $form['winner'], 'id' => 'p-winner', 'error' => null]); ?>
+            <?php field('goal_diff_points', 'Saldo de gols', ['type' => 'number', 'min' => 0, 'max' => 20, 'inputmode' => 'numeric',
+                'value' => $form['diff'], 'id' => 'p-diff', 'error' => null]); ?>
         </div>
+        <?php if (isset($errors['points'])): ?>
+            <p class="field-error"><?= e($errors['points']) ?></p>
+        <?php endif; ?>
+        <p class="help example" data-points-example data-fmt="create" aria-live="polite"><?= e($exampleText) ?></p>
     </fieldset>
 
-    <button type="submit" class="btn full">Criar bolão</button>
+    <button type="submit" class="btn primary wide">Criar bolão</button>
 </form>
 <?php
 page_end();

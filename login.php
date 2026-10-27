@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/includes/app.php';
 
+$next = safe_next($_SERVER['REQUEST_METHOD'] === 'POST' ? ($_POST['next'] ?? null) : ($_GET['next'] ?? null));
+
 if (current_user()) {
-    redirect('index.php');
+    redirect($next ?? 'index.php');
 }
 
 $error = null;
@@ -21,36 +23,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Mensagem genérica: não revela se o e-mail existe.
     if ($user && password_verify($password, $user['password_hash'])) {
         login_user((int) $user['id']);
-        redirect('index.php');
+        redirect($next ?? 'index.php');
     }
 
     $error = 'E-mail ou senha incorretos.';
 }
 
-page_start('Entrar', null, 'card');
+$lead = ($next && strpos($next, 'join_group.php') === 0)
+    ? 'Entre para abrir o convite do bolão.'
+    : 'Palpites rodada a rodada e um ranking só com os seus amigos.';
+$registerHref = 'register.php' . ($next ? '?next=' . urlencode($next) : '');
+
+page_start('Entrar', null, 'card', '');
 ?>
 <section class="auth-hero">
     <h1 class="wordmark"><?= e(SITE_NAME) ?></h1>
-    <div class="scoreboard" aria-hidden="true"><span>2</span><span class="sep">:</span><span>1</span></div>
-    <p class="lead">Palpites rodada a rodada e um ranking só com os seus amigos.</p>
+    <p class="scoreboard" aria-hidden="true"><span>2</span><span class="sep">:</span><span>1</span></p>
+    <p class="lead"><?= e($lead) ?></p>
 </section>
 
 <?php alert_box($error ? [$error] : []); ?>
 
 <form method="post" action="login.php" class="panel auth-form">
     <?= csrf_field() ?>
+    <?php if ($next): ?>
+        <input type="hidden" name="next" value="<?= e($next) ?>">
+    <?php endif; ?>
 
-    <label>E-mail
-        <input type="email" name="email" value="<?= e($email) ?>" autocomplete="email" required>
-    </label>
+    <?php field('email', 'E-mail', ['type' => 'email', 'value' => $email, 'autocomplete' => 'email', 'required' => true, 'autofocus' => $email === '']); ?>
+    <?php field('password', 'Senha', ['type' => 'password', 'autocomplete' => 'current-password', 'required' => true, 'autofocus' => $email !== '']); ?>
 
-    <label>Senha
-        <input type="password" name="password" autocomplete="current-password" required>
-    </label>
-
-    <button type="submit" class="full">Entrar</button>
+    <button type="submit" class="btn primary wide">Entrar</button>
 </form>
 
-<p class="muted">Ainda não tem conta? <a href="register.php">Criar conta</a></p>
+<p class="muted center">Ainda não tem conta? <a href="<?= e($registerHref) ?>">Criar conta</a></p>
 <?php
 page_end();

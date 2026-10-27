@@ -9,14 +9,16 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 verify_csrf();
 
 $groupId = (int) ($_POST['group_id'] ?? 0);
-$group = require_member($groupId, $user['id']);
+$group = require_member($groupId, (int) $user['id']);
 
 // O organizador não pode sair do próprio bolão.
 if ((int) $group['owner_id'] === (int) $user['id']) {
-    redirect('group.php?id=' . $groupId . '&error=owner');
+    flash_set('alert', 'O organizador não pode sair do próprio bolão.');
+    redirect('group.php?id=' . $groupId);
 }
 
 db()->prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?')
     ->execute([$groupId, $user['id']]);
 
+flash_set('notice', 'Você saiu do bolão.');
 redirect('index.php');

@@ -2,10 +2,10 @@
 require_once __DIR__ . '/includes/app.php';
 
 $user = require_login();
-$errors = [];
-$message = null;
+$errors = [];      // campo => mensagem
+$old = [];
 
-$stmt = db()->prepare('SELECT id, name, email, password_hash, created_at FROM users WHERE id = ?');
+$stmt = db()->prepare('SELECT id, name, email, password_hash FROM users WHERE id = ?');
 $stmt->execute([$user['id']]);
 $me = $stmt->fetch();
 
@@ -16,12 +16,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'profile') {
         $name = trim($_POST['name'] ?? '');
         if ($name === '' || mb_strlen($name) > 100) {
-            $errors[] = 'Informe um nome de até 100 caracteres.';
-        }
-        if (!$errors) {
+            $errors['name'] = 'O nome precisa ter entre 1 e 100 letras.';
+            $old['name'] = $name;
+        } else {
             db()->prepare('UPDATE users SET name = ? WHERE id = ?')->execute([$name, $user['id']]);
-            $me['name'] = $name;
-            $message = 'Nome atualizado.';
+            flash_set('perfil', ['block' => 'nome', 'ok' => 'Nome atualizado.']);
+            redirect('perfil.php#bloco-nome');
         }
     }
 
@@ -31,69 +31,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $confirm = (string) ($_POST['confirm_password'] ?? '');
 
         if (!password_verify($current, $me['password_hash'])) {
-            $errors[] = 'A senha atual está incorreta.';
+            $errors['current'] = 'A senha atual está incorreta.';
         }
         if (strlen($new) < 8) {
-            $errors[] = 'A nova senha precisa ter pelo menos 8 caracteres.';
+            $errors['new_password'] = 'A nova senha precisa ter pelo menos 8 caracteres.';
         }
         if ($new !== $confirm) {
-            $errors[] = 'A confirmação não é igual à nova senha.';
+            $errors['confirm_password'] = 'A confirmação não é igual à nova senha.';
         }
         if (!$errors) {
             db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
                 ->execute([password_hash($new, PASSWORD_DEFAULT), $user['id']]);
             session_regenerate_id(true);
-            $message = 'Senha alterada.';
+            flash_set('perfil', ['block' => 'senha', 'ok' => 'Senha trocada. Use a nova na próxima vez que entrar.']);
+            redirect('perfil.php#bloco-senha');
         }
     }
 }
 
-page_start('Conta', $user, 'wrap');
+$perfilFlash = flash_take('perfil');
+$nameValue = $old['name'] ?? $me['name'];
+$firstError = $errors ? array_key_first($errors) : null;
+
+page_start('Conta', $user, 'wrap', 'conta');
 ?>
 <div class="page-head">
     <div>
-        <h1>Conta</h1>
-        <p class="muted-left"><?= e($me['email']) ?></p>
+        <h1 class="h-page">Sua conta</h1>
+        <p class="lede"><?= e($me['email']) ?> <span class="muted-small">(usado para entrar)</span></p>
     </div>
 </div>
 
-<?php if ($message): ?>
-    <?php notice($message); ?>
-<?php endif; ?>
+<section class="block" id="bloco-nome">
+    <h2 class="section-title">Seu nome</h2>
+    <p class="help">Seu nome aparece no ranking dos seus bolões.</p>
+    <?php if ($perfilFlash && $perfilFlash['block'] === 'nome'): notice($perfilFlash['ok']); endif; ?>
+    <form method="post" action="perfil.php#bloco-nome" class="panel stack">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="profile">
+        <?php field('name', 'Nome', ['value' => $nameValue, 'maxlength' => 100, 'autocomplete' => 'name', 'required' => true,
+            'error' => $errors['name'] ?? null, 'autofocus' => $firstError === 'name']); ?>
+        <div class="actions"><button type="submit" class="btn primary" data-busy="Salvando…">Salvar nome</button></div>
+    </form>
+</section>
 
-<?php alert_box($errors); ?>
+<section class="block" id="bloco-senha">
+    <h2 class="section-title">Trocar senha</h2>
+    <?php if ($perfilFlash && $perfilFlash['block'] === 'senha'): notice($perfilFlash['ok']); endif; ?>
+    <form method="post" action="perfil.php#bloco-senha" class="panel stack">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="password">
+        <?php field('current', 'Senha atual', ['type' => 'password', 'autocomplete' => 'current-password', 'required' => true,
+            'error' => $errors['current'] ?? null, 'autofocus' => $firstError === 'current']); ?>
+        <?php field('new_password', 'Nova senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
+            'help' => 'Mínimo de 8 caracteres.', 'error' => $errors['new_password'] ?? null, 'autofocus' => $firstError === 'new_password']); ?>
+        <?php field('confirm_password', 'Confirmar nova senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
+            'error' => $errors['confirm_password'] ?? null, 'autofocus' => $firstError === 'confirm_password']); ?>
+        <div class="actions"><button type="submit" class="btn primary" data-busy="Salvando…">Trocar senha</button></div>
+    </form>
+</section>
 
-<div class="grid-2">
-    <section class="panel">
-        <h2>Seu nome</h2>
-        <p class="muted-left small-text">É como os seus amigos veem você no ranking.</p>
-        <form method="post" action="perfil.php">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="profile">
-            <label>Nome
-                <input type="text" name="name" value="<?= e($me['name']) ?>" maxlength="100" autocomplete="name" required>
-            </label>
-            <button type="submit" class="full">Salvar nome</button>
-        </form>
-    </section>
-
-    <section class="panel">
-        <h2>Trocar senha</h2>
-        <form method="post" action="perfil.php">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="password">
-            <label>Senha atual
-                <input type="password" name="current" autocomplete="current-password" required>
-            </label>
-            <label>Nova senha (mínimo de 8 caracteres)
-                <input type="password" name="new_password" minlength="8" autocomplete="new-password" required>
-            </label>
-            <label>Confirmar nova senha
-                <input type="password" name="confirm_password" minlength="8" autocomplete="new-password" required>
-            </label>
-            <button type="submit" class="full">Trocar senha</button>
-        </form>
-    </section>
-</div>
+<section class="block">
+    <h2 class="section-title">Sair da conta</h2>
+    <form method="post" action="logout.php">
+        <?= csrf_field() ?>
+        <button type="submit" class="btn ghost">Sair da conta</button>
+    </form>
+</section>
 <?php
 page_end();

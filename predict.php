@@ -12,18 +12,21 @@ $groupId = (int) ($_POST['group_id'] ?? 0);
 $round = (int) ($_POST['round'] ?? 0);
 require_member($groupId, $user['id']);
 
-// Só aceita palpites de jogos desta rodada, das ligas do grupo, ainda abertos.
+// Jogos desta rodada, das ligas do grupo. Só os abertos aceitam palpite.
 $leagueIds = group_league_ids($groupId);
 $stmt = db()->prepare(
-    'SELECT id, kickoff_at FROM matches
+    'SELECT id, kickoff_at, home_team, away_team FROM matches
      WHERE league_id IN (' . placeholders($leagueIds) . ') AND round = ?'
 );
 $stmt->execute([...$leagueIds, $round]);
 
+$matches = [];
 $allowed = [];
 foreach ($stmt->fetchAll() as $match) {
+    $id = (int) $match['id'];
+    $matches[$id] = $match;
     if (is_open($match)) {
-        $allowed[(int) $match['id']] = true;
+        $allowed[$id] = true;
     }
 }
 
@@ -34,25 +37,48 @@ $upsert = db()->prepare(
 );
 
 $preds = is_array($_POST['preds'] ?? null) ? $_POST['preds'] : [];
+$saved = 0;
+$skipped = [];   // o que não entrou, com motivo, para mostrar na tela
+$keep = [];      // o que a pessoa digitou nesses jogos, para não perder
+
 foreach ($preds as $matchId => $score) {
     $matchId = (int) $matchId;
-    if (!isset($allowed[$matchId]) || !is_array($score)) {
+    if (!isset($matches[$matchId]) || !is_array($score)) {
         continue;
     }
 
+    $match = $matches[$matchId];
     $home = trim((string) ($score['home'] ?? ''));
     $away = trim((string) ($score['away'] ?? ''));
-    if ($home === '' || $away === '' || !ctype_digit($home) || !ctype_digit($away)) {
+    if ($home === '' && $away === '') {
+        continue; // jogo deixado em branco: não é erro
+    }
+
+    $label = $match['home_team'] . ' × ' . $match['away_team'];
+    $reason = null;
+    if (!isset($allowed[$matchId])) {
+        $reason = 'o jogo já começou';
+    } elseif ($home === '' || $away === '') {
+        $reason = $home === '' ? 'falta o placar do mandante' : 'falta o placar do visitante';
+    } elseif (!ctype_digit($home) || !ctype_digit($away) || (int) $home > 30 || (int) $away > 30) {
+        $reason = 'use placares de 0 a 30';
+    }
+
+    if ($reason !== null) {
+        $skipped[] = ['id' => $matchId, 'label' => $label, 'reason' => $reason];
+        $keep[$matchId] = ['home' => $home, 'away' => $away];
         continue;
     }
 
-    $homeGoals = (int) $home;
-    $awayGoals = (int) $away;
-    if ($homeGoals > 30 || $awayGoals > 30) {
-        continue;
-    }
-
-    $upsert->execute([$user['id'], $groupId, $matchId, $homeGoals, $awayGoals]);
+    $upsert->execute([$user['id'], $groupId, $matchId, (int) $home, (int) $away]);
+    $saved++;
 }
 
-redirect('group.php?id=' . $groupId . '&round=' . $round . '&saved=1');
+flash_set('predict', [
+    'saved' => $saved,
+    'time' => kick_clock(time()),
+    'skipped' => $skipped,
+    'keep' => $keep,
+]);
+
+redirect('group.php?id=' . $groupId . '&round=' . $round);

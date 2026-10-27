@@ -1,231 +1,136 @@
 <?php
+// Ações do organizador na aba Configurar. Cada bloco tem o seu formulário.
 require_once __DIR__ . '/includes/app.php';
 
 $user = require_login();
 $groupId = (int) ($_GET['id'] ?? $_POST['group_id'] ?? 0);
-$group = require_member($groupId, $user['id']);
+$group = require_member($groupId, (int) $user['id']);
 
-// Só o organizador altera as configurações.
 if ((int) $group['owner_id'] !== (int) $user['id']) {
-    redirect('group.php?id=' . $groupId);
+    flash_set('alert', 'Só o organizador pode alterar as configurações deste bolão.');
+    redirect('group.php?id=' . $groupId . '&tab=regras');
 }
 
-$leagues = db()->query('SELECT id, name FROM leagues ORDER BY name')->fetchAll();
-$validLeagueIds = array_map('intval', array_column($leagues, 'id'));
-$errors = [];
-$action = $_POST['action'] ?? 'settings';
+$back = 'group.php?id=' . $groupId . '&tab=configurar';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    verify_csrf();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect($back);
+}
+verify_csrf();
 
-    if ($action === 'new_code') {
-        // O link antigo deixa de funcionar. Quem já está no bolão continua nele.
-        db()->prepare('UPDATE bolao_groups SET invite_code = ? WHERE id = ?')
-            ->execute([bin2hex(random_bytes(5)), $groupId]);
-        redirect('group_settings.php?id=' . $groupId . '&saved=code');
-    }
-
-    if ($action === 'delete') {
-        $typed = trim($_POST['confirm_name'] ?? '');
-        if ($typed !== $group['name']) {
-            $errors[] = 'Para excluir, digite o nome exato do bolão.';
-        } else {
-            // Apaga membros, ligas e palpites junto (ON DELETE CASCADE).
-            db()->prepare('DELETE FROM bolao_groups WHERE id = ?')->execute([$groupId]);
-            redirect('index.php');
-        }
-    }
-
-    if ($action === 'settings') {
-        $name = trim($_POST['name'] ?? '');
-        $password = (string) ($_POST['password'] ?? '');
-        $removePassword = isset($_POST['remove_password']);
-        $exact = (int) ($_POST['exact_points'] ?? 5);
-        $winner = (int) ($_POST['winner_points'] ?? 3);
-        $diff = (int) ($_POST['goal_diff_points'] ?? 1);
-        $selected = array_values(array_intersect(
-            array_map('intval', (array) ($_POST['leagues'] ?? [])),
-            $validLeagueIds
-        ));
-
-        if ($name === '' || mb_strlen($name) > 100) {
-            $errors[] = 'Informe um nome de até 100 caracteres.';
-        }
-        if (!$selected) {
-            $errors[] = 'Escolha pelo menos uma liga.';
-        }
-        foreach ([$exact, $winner, $diff] as $points) {
-            if ($points < 0 || $points > 20) {
-                $errors[] = 'Os pontos devem ficar entre 0 e 20.';
-                break;
-            }
-        }
-        if ($password !== '' && strlen($password) < 4) {
-            $errors[] = 'A nova senha precisa ter pelo menos 4 caracteres.';
-        }
-
-        if (!$errors) {
-            $pdo = db();
-            $pdo->beginTransaction();
-
-            // Senha: nova senha substitui; "remover" limpa; em branco mantém a atual.
-            $passwordHash = $group['password_hash'];
-            if ($removePassword) {
-                $passwordHash = null;
-            } elseif ($password !== '') {
-                $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-            }
-
-            $pdo->prepare(
-                'UPDATE bolao_groups
-                 SET name = ?, password_hash = ?, exact_points = ?, winner_points = ?, goal_diff_points = ?
-                 WHERE id = ?'
-            )->execute([$name, $passwordHash, $exact, $winner, $diff, $groupId]);
-
-            $pdo->prepare('DELETE FROM group_leagues WHERE group_id = ?')->execute([$groupId]);
-            $insertLeague = $pdo->prepare('INSERT INTO group_leagues (group_id, league_id) VALUES (?, ?)');
-            foreach ($selected as $leagueId) {
-                $insertLeague->execute([$groupId, $leagueId]);
-            }
-
-            $pdo->commit();
-
-            // Pontos podem ter mudado: recalcula os palpites deste grupo.
-            recalculate_group($groupId);
-
-            redirect('group_settings.php?id=' . $groupId . '&saved=settings');
-        }
-
-        // Mantém o que foi digitado quando há erro.
-        $group['name'] = $name;
-        $group['exact_points'] = $exact;
-        $group['winner_points'] = $winner;
-        $group['goal_diff_points'] = $diff;
-    }
+/** Volta para o bloco com os erros e o que foi digitado. */
+function config_fail(string $block, array $fieldErrors, array $old, string $back): void
+{
+    flash_set('config', [
+        'block' => $block,
+        'errors' => array_values($fieldErrors),
+        'field_errors' => $fieldErrors,
+        'old' => $old,
+        'ok' => null,
+    ]);
+    redirect($back . '#bloco-' . $block);
 }
 
-$stmt = db()->prepare('SELECT league_id FROM group_leagues WHERE group_id = ?');
-$stmt->execute([$groupId]);
-$currentLeagues = array_map('intval', array_column($stmt->fetchAll(), 'league_id'));
-if (isset($selected)) {
-    $currentLeagues = $selected;
+function config_ok(string $block, string $text, string $back): void
+{
+    flash_set('config', ['block' => $block, 'ok' => $text, 'errors' => [], 'field_errors' => [], 'old' => []]);
+    redirect($back . '#bloco-' . $block);
 }
 
-$scheme = !empty($_SERVER['HTTPS']) ? 'https' : 'http';
-$inviteUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . BASE_URL . 'join_group.php?code=' . $group['invite_code'];
+$pdo = db();
+$action = $_POST['action'] ?? '';
 
-$saved = $_GET['saved'] ?? '';
-$savedText = [
-    'settings' => 'Configurações salvas.',
-    'code' => 'Novo código gerado. O link antigo não funciona mais.',
-][$saved] ?? null;
+if ($action === 'name') {
+    $name = trim($_POST['name'] ?? '');
+    if ($name === '' || mb_strlen($name) > 100) {
+        config_fail('nome', ['name' => 'O nome precisa ter entre 1 e 100 letras.'], ['name' => $name], $back);
+    }
+    $pdo->prepare('UPDATE bolao_groups SET name = ? WHERE id = ?')->execute([$name, $groupId]);
+    config_ok('nome', 'Alterações salvas.', $back);
+}
 
-page_start('Configurar bolão', $user, 'wrap');
-?>
-<div class="page-head">
-    <div>
-        <h1>Configurar bolão</h1>
-        <p class="muted-left"><?= e($group['name']) ?></p>
-    </div>
-    <div class="actions">
-        <a class="btn secondary" href="group.php?id=<?= $groupId ?>">Voltar ao bolão</a>
-        <a class="btn secondary" href="members.php?id=<?= $groupId ?>">Membros</a>
-    </div>
-</div>
+if ($action === 'password') {
+    $password = (string) ($_POST['password'] ?? '');
+    if (strlen($password) < 4) {
+        config_fail('entrada', ['password' => 'A nova senha precisa ter pelo menos 4 caracteres.'], [], $back);
+    }
+    $pdo->prepare('UPDATE bolao_groups SET password_hash = ? WHERE id = ?')
+        ->execute([password_hash($password, PASSWORD_DEFAULT), $groupId]);
+    config_ok('entrada', 'Alterações salvas.', $back);
+}
 
-<?php if ($savedText): ?>
-    <?php notice($savedText); ?>
-<?php endif; ?>
+if ($action === 'remove_password') {
+    $pdo->prepare('UPDATE bolao_groups SET password_hash = NULL WHERE id = ?')->execute([$groupId]);
+    config_ok('entrada', 'Senha removida. Quem tiver o link entra direto.', $back);
+}
 
-<?php alert_box($errors); ?>
+if ($action === 'leagues') {
+    $leagueIds = array_map('intval', array_column($pdo->query('SELECT id FROM leagues')->fetchAll(), 'id'));
+    $selected = array_values(array_intersect(array_map('intval', (array) ($_POST['leagues'] ?? [])), $leagueIds));
+    if (!$selected) {
+        config_fail('ligas', ['leagues' => 'Marque pelo menos uma liga.'], ['leagues' => []], $back);
+    }
 
-<section class="panel">
-    <h2>Dados e regras</h2>
-    <p class="muted-left">Ao mudar pontos ou ligas, os resultados já lançados são recalculados.</p>
+    $scored = group_scored_counts($groupId);
+    $pdo->beginTransaction();
+    $pdo->prepare('DELETE FROM group_leagues WHERE group_id = ?')->execute([$groupId]);
+    $insert = $pdo->prepare('INSERT INTO group_leagues (group_id, league_id) VALUES (?, ?)');
+    foreach ($selected as $leagueId) {
+        $insert->execute([$groupId, $leagueId]);
+    }
+    $pdo->commit();
+    recalculate_group($groupId);
 
-    <form method="post" action="group_settings.php?id=<?= $groupId ?>">
-        <?= csrf_field() ?>
-        <input type="hidden" name="action" value="settings">
-        <input type="hidden" name="group_id" value="<?= $groupId ?>">
+    $text = $scored['preds'] > 0
+        ? 'Alterações salvas. Pontos de ' . plural($scored['preds'], 'palpite', 'palpites') . ' recalculados.'
+        : 'Alterações salvas.';
+    config_ok('ligas', $text, $back);
+}
 
-        <label>Nome do bolão
-            <input type="text" name="name" value="<?= e($group['name']) ?>" maxlength="100" required>
-        </label>
+if ($action === 'points') {
+    $values = [
+        'exact' => trim((string) ($_POST['exact_points'] ?? '')),
+        'winner' => trim((string) ($_POST['winner_points'] ?? '')),
+        'diff' => trim((string) ($_POST['goal_diff_points'] ?? '')),
+    ];
+    $errors = [];
+    foreach ($values as $key => $raw) {
+        if (!ctype_digit($raw) || (int) $raw > 20) {
+            $errors[$key] = 'Os pontos devem ser um número entre 0 e 20.';
+        }
+    }
+    if ($errors) {
+        config_fail('pontos', $errors, $values, $back);
+    }
 
-        <fieldset>
-            <legend>Senha de entrada</legend>
-            <p class="muted-left small-text"><?= $group['password_hash'] !== null ? 'Este bolão tem senha.' : 'Este bolão não tem senha.' ?> Preencha abaixo só para trocar.</p>
-            <label>Nova senha
-                <input type="password" name="password" autocomplete="new-password">
-            </label>
-            <?php if ($group['password_hash'] !== null): ?>
-                <label class="check">
-                    <input type="checkbox" name="remove_password"> Remover a senha
-                </label>
-            <?php endif; ?>
-        </fieldset>
+    $pdo->prepare(
+        'UPDATE bolao_groups SET exact_points = ?, winner_points = ?, goal_diff_points = ? WHERE id = ?'
+    )->execute([(int) $values['exact'], (int) $values['winner'], (int) $values['diff'], $groupId]);
 
-        <fieldset>
-            <legend>Ligas</legend>
-            <?php foreach ($leagues as $league): ?>
-                <label class="check">
-                    <input type="checkbox" name="leagues[]" value="<?= (int) $league['id'] ?>"
-                        <?= in_array((int) $league['id'], $currentLeagues, true) ? 'checked' : '' ?>>
-                    <?= e($league['name']) ?>
-                </label>
-            <?php endforeach; ?>
-        </fieldset>
+    $scored = group_scored_counts($groupId);
+    recalculate_group($groupId);
+    $text = $scored['preds'] > 0
+        ? 'Alterações salvas. Pontos de ' . plural($scored['preds'], 'palpite', 'palpites') . ' recalculados.'
+        : 'Alterações salvas.';
+    config_ok('pontos', $text, $back);
+}
 
-        <fieldset>
-            <legend>Pontuação</legend>
-            <div class="grid3">
-                <label>Placar exato
-                    <input type="number" name="exact_points" min="0" max="20" value="<?= (int) $group['exact_points'] ?>">
-                </label>
-                <label>Vencedor ou empate
-                    <input type="number" name="winner_points" min="0" max="20" value="<?= (int) $group['winner_points'] ?>">
-                </label>
-                <label>Saldo de gols
-                    <input type="number" name="goal_diff_points" min="0" max="20" value="<?= (int) $group['goal_diff_points'] ?>">
-                </label>
-            </div>
-        </fieldset>
+if ($action === 'new_code') {
+    // O link antigo deixa de funcionar. Quem já está no bolão continua nele.
+    $pdo->prepare('UPDATE bolao_groups SET invite_code = ? WHERE id = ?')
+        ->execute([bin2hex(random_bytes(5)), $groupId]);
+    config_ok('convite', 'Novo código gerado. O link antigo não funciona mais.', $back);
+}
 
-        <button type="submit" class="full">Salvar alterações</button>
-    </form>
-</section>
+if ($action === 'delete') {
+    $typed = trim($_POST['confirm_name'] ?? '');
+    if ($typed !== $group['name']) {
+        config_fail('perigo', ['confirm_name' => 'Para excluir, digite o nome exato do bolão.'], [], $back);
+    }
+    // Apaga membros, ligas e palpites junto (ON DELETE CASCADE).
+    $pdo->prepare('DELETE FROM bolao_groups WHERE id = ?')->execute([$groupId]);
+    flash_set('notice', 'Bolão excluído.');
+    redirect('index.php');
+}
 
-<section class="panel">
-    <h2>Convite</h2>
-    <div class="setting-row">
-        <div>
-            <p class="muted-left small-text">Código atual</p>
-            <p class="code"><?= e($group['invite_code']) ?></p>
-        </div>
-        <form method="post" action="group_settings.php?id=<?= $groupId ?>" class="inline-form"
-              onsubmit="return confirm('Gerar um novo código? O link atual deixa de funcionar.');">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="new_code">
-            <input type="hidden" name="group_id" value="<?= $groupId ?>">
-            <button type="submit" class="btn secondary">Gerar novo código</button>
-        </form>
-    </div>
-    <p class="muted-left small-text">Link para os amigos: <?= e($inviteUrl) ?></p>
-</section>
-
-<section class="panel danger">
-    <h2>Excluir bolão</h2>
-    <p>Apaga o bolão, os participantes e todos os palpites. Não dá para desfazer.</p>
-    <form method="post" action="group_settings.php?id=<?= $groupId ?>"
-          onsubmit="return confirm('Excluir este bolão para sempre?');">
-        <?= csrf_field() ?>
-        <input type="hidden" name="action" value="delete">
-        <input type="hidden" name="group_id" value="<?= $groupId ?>">
-        <label>Para confirmar, digite o nome do bolão
-            <input type="text" name="confirm_name" autocomplete="off" required>
-        </label>
-        <button type="submit" class="btn danger-btn">Excluir bolão</button>
-    </form>
-</section>
-<?php
-page_end();
+redirect($back);

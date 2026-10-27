@@ -25,6 +25,25 @@ function redirect(string $path): void
     exit;
 }
 
+/**
+ * Mensagem que sobrevive a um redirecionamento (PRG).
+ * Lida uma vez com flash_take(). Some ao recarregar a página.
+ */
+function flash_set(string $key, $value): void
+{
+    $_SESSION['flash'][$key] = $value;
+}
+
+function flash_take(string $key)
+{
+    if (!isset($_SESSION['flash'][$key])) {
+        return null;
+    }
+    $value = $_SESSION['flash'][$key];
+    unset($_SESSION['flash'][$key]);
+    return $value;
+}
+
 /** Token CSRF: impede que outros sites enviem formulários em nome do usuário. */
 function csrf_token(): string
 {
@@ -41,10 +60,9 @@ function csrf_field(): string
 
 function verify_csrf(): void
 {
-    $sent = $_POST['csrf_token'] ?? '';
+    $sent = (string) ($_POST['csrf_token'] ?? '');
     if (!hash_equals(csrf_token(), $sent)) {
-        http_response_code(403);
-        exit('Requisição inválida. Recarregue a página e tente novamente.');
+        fail_page(403, 'Sua sessão expirou', 'Entre de novo para salvar seus palpites. Se você digitou algo, copie antes de sair.', null, [['login.php', 'Entrar de novo']]);
     }
 }
 
@@ -64,6 +82,7 @@ function current_user(): ?array
     return $user;
 }
 
+/** Sem login, manda para a tela de entrada. */
 function require_login(): array
 {
     $user = current_user();
