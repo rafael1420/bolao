@@ -1,6 +1,13 @@
 <?php
 // Cabeçalho, rodapé e componentes comuns a todas as páginas.
 
+/** Caminho de um arquivo em assets/ com a data de modificação, para o navegador não usar a versão antiga do cache. */
+function asset(string $file): string
+{
+    $mtime = @filemtime(__DIR__ . '/../assets/' . $file);
+    return 'assets/' . $file . ($mtime ? '?v=' . $mtime : '');
+}
+
 /** Ícones SVG inline. Herdam a cor do texto e são ocultos para leitores de tela. */
 function icon(string $name): string
 {
@@ -242,14 +249,14 @@ function page_start(string $title, ?array $user = null, string $width = 'wrap', 
             } catch (e) {}
         })();
     </script>
-    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-    <link rel="icon" href="assets/icon-192.png" type="image/png" sizes="192x192">
-    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-    <link rel="manifest" href="assets/manifest.webmanifest">
+    <link rel="icon" href="<?= e(asset('favicon.svg')) ?>" type="image/svg+xml">
+    <link rel="icon" href="<?= e(asset('icon-192.png')) ?>" type="image/png" sizes="192x192">
+    <link rel="apple-touch-icon" href="<?= e(asset('apple-touch-icon.png')) ?>">
+    <link rel="manifest" href="<?= e(asset('manifest.webmanifest')) ?>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/style.css">
+    <link rel="stylesheet" href="<?= e(asset('style.css')) ?>">
 </head>
 <body class="<?= e($bodyClass) ?>">
 <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
@@ -301,7 +308,7 @@ function page_end(): void
     $year = date('Y');
     echo "</main>\n"
         . '<footer class="site-foot"><p>' . e(SITE_NAME) . ' · bolão entre amigos, sem dinheiro envolvido · ' . $year . "</p></footer>\n"
-        . "<script src=\"assets/app.js\" defer></script>\n</body>\n</html>\n";
+        . "<script src=\"" . e(asset('app.js')) . "\" defer></script>\n</body>\n</html>\n";
 }
 
 /** Página de erro dentro do layout do site (acesso negado, sessão expirada). */
