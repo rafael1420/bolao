@@ -93,6 +93,7 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
 ?>
 <div class="page-head">
     <div>
+        <p class="eyebrow">Meus bolões</p>
         <h1 class="h-page">Novo bolão</h1>
         <p class="lede">Você vira o organizador e pode mudar as regras depois.</p>
     </div>
@@ -100,8 +101,9 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
 
 <?php alert_box($summary); ?>
 
-<form method="post" action="create_group.php" class="panel stack-lg">
+<form method="post" action="create_group.php" class="panel stack-lg create-form">
     <?= csrf_field() ?>
+    <h2 class="form-step"><span class="step-num" aria-hidden="true">1</span>Nome e entrada</h2>
 
     <?php field('name', 'Nome do bolão', ['value' => $form['name'], 'maxlength' => 100, 'required' => true,
         'error' => $errors['name'] ?? null, 'autofocus' => isset($errors['name'])]); ?>
@@ -111,7 +113,7 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
         'autofocus' => isset($errors['password'])]); ?>
 
     <fieldset class="fieldset<?= isset($errors['leagues']) ? ' is-invalid' : '' ?>">
-        <legend>Ligas</legend>
+        <legend class="form-step"><span class="step-num" aria-hidden="true">2</span>Ligas</legend>
         <?php if (isset($errors['leagues'])): ?>
             <p class="field-error"><?= e($errors['leagues']) ?></p>
         <?php endif; ?>
@@ -122,7 +124,7 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
     </fieldset>
 
     <fieldset class="fieldset<?= isset($errors['points']) ? ' is-invalid' : '' ?>">
-        <legend>Pontuação</legend>
+        <legend class="form-step"><span class="step-num" aria-hidden="true">3</span>Pontuação</legend>
         <div class="grid3">
             <?php field('exact_points', 'Placar exato', ['type' => 'number', 'min' => 0, 'max' => 20, 'inputmode' => 'numeric',
                 'value' => $form['exact'], 'id' => 'p-exact', 'error' => null]); ?>
@@ -137,7 +139,7 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
         <p class="help example" data-points-example data-fmt="create" aria-live="polite"><?= e($exampleText) ?></p>
     </fieldset>
 
-    <button type="submit" class="btn primary wide">Criar bolão</button>
+    <button type="submit" class="btn primary wide" data-busy="Criando…">Criar bolão</button>
 </form>
 <?php
 page_end();

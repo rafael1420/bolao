@@ -28,6 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if (strlen($password) < 8) {
         $errors['password'] = 'A senha precisa ter pelo menos 8 caracteres.';
+    } elseif (strlen($password) > 200) {
+        $errors['password'] = 'A senha pode ter no máximo 200 caracteres.';
     }
     if (!isset($errors['password']) && $password !== $confirm) {
         $errors['password_confirm'] = 'As senhas não são iguais.';
@@ -43,9 +45,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errors) {
         $stmt = db()->prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)');
-        $stmt->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT)]);
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $stmt->execute([$name, $email, $hash]);
 
-        login_user((int) db()->lastInsertId());
+        login_user((int) db()->lastInsertId(), $hash);
         redirect($next ?? 'index.php');
     }
     $summary = array_values($errors);
@@ -54,34 +57,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $firstError = $errors ? array_key_first($errors) : null;
 $loginHref = 'login.php' . ($next ? '?next=' . urlencode($next) : '');
 
-page_start('Criar conta', null, 'card', '');
+page_start('Criar conta', null, 'auth', '');
 ?>
-<section class="auth-hero">
-    <h1 class="h-page">Criar conta</h1>
-    <p class="lead">Leva menos de um minuto. Depois é só criar um bolão ou entrar com o código de um amigo.</p>
-</section>
+<div class="auth-grid">
+    <?php auth_pitch(); ?>
 
-<?php alert_box($summary); ?>
+    <section class="auth-panel" aria-labelledby="titulo-cadastro">
+        <h1 class="h-page" id="titulo-cadastro">Criar conta</h1>
+        <p class="lead">Leva menos de um minuto. Depois é só criar um bolão ou entrar com o código de um amigo.</p>
 
-<form method="post" action="register.php<?= $next ? '?next=' . e(urlencode($next)) : '' ?>" class="panel auth-form">
-    <?= csrf_field() ?>
-    <?php if ($next): ?>
-        <input type="hidden" name="next" value="<?= e($next) ?>">
-    <?php endif; ?>
+        <?php alert_box($summary); ?>
 
-    <?php field('name', 'Nome', ['value' => $old['name'], 'maxlength' => 100, 'autocomplete' => 'name', 'required' => true,
-        'help' => 'É como os seus amigos veem você no ranking.', 'error' => $errors['name'] ?? null,
-        'autofocus' => $firstError === 'name']); ?>
-    <?php field('email', 'E-mail', ['type' => 'email', 'value' => $old['email'], 'maxlength' => 150, 'autocomplete' => 'email', 'required' => true,
-        'error' => $errors['email'] ?? null, 'autofocus' => $firstError === 'email']); ?>
-    <?php field('password', 'Senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
-        'help' => 'Mínimo de 8 caracteres.', 'error' => $errors['password'] ?? null, 'autofocus' => $firstError === 'password']); ?>
-    <?php field('password_confirm', 'Confirmar senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
-        'error' => $errors['password_confirm'] ?? null, 'autofocus' => $firstError === 'password_confirm']); ?>
+        <form method="post" action="register.php<?= $next ? '?next=' . e(urlencode($next)) : '' ?>" class="panel auth-form">
+            <?= csrf_field() ?>
+            <?php if ($next): ?>
+                <input type="hidden" name="next" value="<?= e($next) ?>">
+            <?php endif; ?>
 
-    <button type="submit" class="btn primary wide">Criar conta</button>
-</form>
+            <?php field('name', 'Nome', ['value' => $old['name'], 'maxlength' => 100, 'autocomplete' => 'name', 'required' => true,
+                'help' => 'É como os seus amigos veem você no ranking.', 'error' => $errors['name'] ?? null,
+                'autofocus' => $firstError === 'name']); ?>
+            <?php field('email', 'E-mail', ['type' => 'email', 'value' => $old['email'], 'maxlength' => 150, 'autocomplete' => 'email', 'required' => true,
+                'error' => $errors['email'] ?? null, 'autofocus' => $firstError === 'email']); ?>
+            <?php field('password', 'Senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
+                'help' => 'Mínimo de 8 caracteres.', 'error' => $errors['password'] ?? null, 'autofocus' => $firstError === 'password']); ?>
+            <?php field('password_confirm', 'Confirmar senha', ['type' => 'password', 'minlength' => 8, 'autocomplete' => 'new-password', 'required' => true,
+                'error' => $errors['password_confirm'] ?? null, 'autofocus' => $firstError === 'password_confirm']); ?>
 
-<p class="muted center">Já tem conta? <a href="<?= e($loginHref) ?>">Entrar</a></p>
+            <button type="submit" class="btn primary wide" data-busy="Criando…">Criar conta</button>
+        </form>
+
+        <p class="muted center auth-switch">Já tem conta? <a href="<?= e($loginHref) ?>">Entrar</a></p>
+    </section>
+</div>
 <?php
 page_end();

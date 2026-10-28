@@ -51,7 +51,7 @@ if ($action === 'name') {
 
 if ($action === 'password') {
     $password = (string) ($_POST['password'] ?? '');
-    if (strlen($password) < 4) {
+    if (strlen($password) < 4 || strlen($password) > 200) {
         config_fail('entrada', ['password' => 'A nova senha precisa ter pelo menos 4 caracteres.'], [], $back);
     }
     $pdo->prepare('UPDATE bolao_groups SET password_hash = ? WHERE id = ?')
@@ -120,6 +120,26 @@ if ($action === 'new_code') {
     $pdo->prepare('UPDATE bolao_groups SET invite_code = ? WHERE id = ?')
         ->execute([bin2hex(random_bytes(5)), $groupId]);
     config_ok('convite', 'Novo código gerado. O link antigo não funciona mais.', $back);
+}
+
+if ($action === 'transfer') {
+    $toId = (int) ($_POST['new_owner_id'] ?? 0);
+    $typed = trim((string) ($_POST['confirm_name'] ?? ''));
+    $old = ['new_owner_id' => (string) $toId];
+    if ($toId <= 0 || $toId === (int) $user['id']) {
+        config_fail('transferir', ['new_owner_id' => 'Escolha quem vai organizar o bolão.'], $old, $back);
+    }
+    if ($typed !== $group['name']) {
+        config_fail('transferir', ['confirm_name' => 'Para transferir, digite o nome exato do bolão.'], $old, $back);
+    }
+    $stmt = $pdo->prepare('SELECT u.name FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? AND gm.user_id = ?');
+    $stmt->execute([$groupId, $toId]);
+    $newName = $stmt->fetchColumn();
+    if ($newName === false || !transfer_group_ownership($groupId, (int) $user['id'], $toId)) {
+        config_fail('transferir', ['new_owner_id' => 'Essa pessoa não está mais no bolão. Escolha outra.'], $old, $back);
+    }
+    flash_set('notice', $newName . ' agora organiza o bolão. Você continua como participante.');
+    redirect('group.php?id=' . $groupId . '&tab=participantes');
 }
 
 if ($action === 'delete') {

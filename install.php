@@ -24,6 +24,15 @@ $values = [
     'name' => '',
     'user' => '',
     'admin_email' => '',
+    'site_url' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://'
+        . preg_replace('/[^A-Za-z0-9.:-]/', '', (string) ($_SERVER['HTTP_HOST'] ?? 'localhost')) . '/',
+];
+
+// Tabelas que o sistema usa. As do schema.sql original e as de cada migração.
+$coreTables = ['users', 'leagues', 'matches', 'bolao_groups', 'group_leagues', 'group_members', 'predictions'];
+$migrationTables = [
+    'password_resets' => '001_password_resets_login_attempts.sql',
+    'login_attempts' => '001_password_resets_login_attempts.sql',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -32,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $values['name'] = trim($_POST['name'] ?? '');
     $values['user'] = trim($_POST['user'] ?? '');
     $values['admin_email'] = strtolower(trim($_POST['admin_email'] ?? ''));
+    $values['site_url'] = trim($_POST['site_url'] ?? '');
     $password = (string) ($_POST['pass'] ?? '');
 
     if ($values['name'] === '' || $values['user'] === '') {
@@ -39,6 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if (!filter_var($values['admin_email'], FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Informe um e-mail válido para o administrador.';
+    }
+    if (!preg_match('#^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$#', $values['site_url'])) {
+        $errors[] = 'Informe o endereço do site, como https://bolao.exemplo.com/.';
+    } else {
+        $values['site_url'] = rtrim($values['site_url'], '/') . '/';
     }
     if (!is_writable($root . '/includes')) {
         $errors[] = 'A pasta includes/ precisa ter permissão de escrita.';
@@ -59,9 +74,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($pdo && !$errors) {
-        $check = $pdo->query("SHOW TABLES LIKE 'users'")->fetch();
-        if (!$check) {
-            $errors[] = 'As tabelas não foram encontradas. Importe o arquivo schema.sql no phpMyAdmin antes de instalar.';
+        $existing = array_map('strtolower', $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN));
+        $missingCore = array_diff($coreTables, $existing);
+        if ($missingCore) {
+            $errors[] = 'As tabelas não foram encontradas (' . implode(', ', $missingCore) . '). Importe o arquivo schema.sql no phpMyAdmin antes de instalar.';
+        } else {
+            $missingFiles = [];
+            foreach ($migrationTables as $table => $file) {
+                if (!in_array($table, $existing, true)) {
+                    $missingFiles[$file] = true;
+                }
+            }
+            if ($missingFiles) {
+                $errors[] = 'Faltam tabelas novas. Importe no phpMyAdmin: sql/migrations/' . implode(', sql/migrations/', array_keys($missingFiles)) . '.';
+            }
         }
     }
 
@@ -75,6 +101,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             . "define('ADMIN_EMAIL', " . var_export($values['admin_email'], true) . ");\n"
             . "define('SITE_NAME', " . var_export($values['site_name'], true) . ");\n"
             . "define('BASE_URL', '/');\n"
+            . "// Endereço público do site, usado nos links enviados por e-mail.\n"
+            . "define('SITE_URL', " . var_export($values['site_url'], true) . ");\n"
+            . "// Remetente dos e-mails. Vazio = no-reply@ o domínio do site.\n"
+            . "define('MAIL_FROM', '');\n"
             . "define('DEBUG', false);\n\n"
             . "if (DEBUG) {\n"
             . "    ini_set('display_errors', '1');\n"
@@ -139,6 +169,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </label>
             <label>Senha do banco
                 <input type="password" name="pass">
+            </label>
+            <label>Endereço do site
+                <input type="url" name="site_url" value="<?= h($values['site_url']) ?>" required>
             </label>
             <label>E-mail do administrador
                 <input type="email" name="admin_email" value="<?= h($values['admin_email']) ?>" required>

@@ -6,12 +6,15 @@ $user = require_admin();
 $tabs = [
     'lancar' => 'Lançar resultados',
     'jogos' => 'Jogos',
+    'importar' => 'Importar jogos',
     'ligas' => 'Ligas',
+    'usuarios' => 'Usuários',
 ];
 $tab = isset($tabs[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'lancar';
 
 $fieldErrors = [];
 $old = [];
+$importPreview = null;  // conferência da importação em lote
 
 /** Endereço desta página mantendo os filtros e a aba. */
 function admin_url(array $params, string $anchor = ''): string
@@ -31,16 +34,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
     $action = $_POST['action'] ?? '';
 
+    if ($action === 'sync') {
+        // Busca agora jogos e placares na ESPN (normalmente roda sozinho, ver includes/sync.php).
+        @set_time_limit(120);
+        try {
+            $result = sync_run('full');
+            if (!empty($result['skipped'])) {
+                flash_set('alert', 'Já existe uma sincronização em andamento. Tente de novo em um minuto.');
+            } else {
+                flash_set('notice', sprintf(
+                    'Sincronizado: %d jogos lidos, %d novos, %d resultados atualizados.%s',
+                    $result['events'],
+                    $result['new'],
+                    $result['results'],
+                    $result['failed_requests'] ? ' ' . $result['failed_requests'] . ' consultas à ESPN falharam.' : ''
+                ));
+            }
+        } catch (Throwable $ex) {
+            error_log('[bolao] sync: ' . $ex);
+            flash_set('alert', 'A sincronização falhou: ' . mb_substr($ex->getMessage(), 0, 200));
+        }
+        redirect(admin_url(['tab' => 'jogos']));
+    }
+
     if ($action === 'add_league') {
         $name = trim($_POST['league_name'] ?? '');
         $code = strtoupper(trim($_POST['league_code'] ?? ''));
         $old = ['league_name' => $name, 'league_code' => $code];
 
-        if ($name === '') {
-            $fieldErrors['league_name'] = 'Informe o nome da liga.';
+        if ($name === '' || mb_strlen($name) > 100) {
+            $fieldErrors['league_name'] = 'Informe o nome da liga, com até 100 letras.';
         }
-        if ($code === '') {
-            $fieldErrors['league_code'] = 'Informe o código da liga, como BRA-A.';
+        if (!preg_match('/^[A-Z0-9_-]{1,20}$/', $code)) {
+            $fieldErrors['league_code'] = 'Informe o código da liga, como BRA-A (letras, números e hífen, até 20).';
         }
         if (!$fieldErrors) {
             $stmt = db()->prepare('SELECT id FROM leagues WHERE code = ?');
@@ -73,11 +99,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($round < 1 || $round > 999) {
             $fieldErrors['round'] = 'Informe a rodada, de 1 a 999.';
         }
-        if ($home === '') {
-            $fieldErrors['home_team'] = 'Informe o mandante.';
+        if ($home === '' || mb_strlen($home) > 100) {
+            $fieldErrors['home_team'] = 'Informe o mandante, com até 100 letras.';
         }
-        if ($away === '') {
-            $fieldErrors['away_team'] = 'Informe o visitante.';
+        if ($away === '' || mb_strlen($away) > 100) {
+            $fieldErrors['away_team'] = 'Informe o visitante, com até 100 letras.';
+        } elseif (mb_strtolower($home) === mb_strtolower($away)) {
+            $fieldErrors['away_team'] = 'Mandante e visitante precisam ser times diferentes.';
         }
         if (!$kickoff) {
             $fieldErrors['kickoff'] = 'Informe a data e o horário do jogo.';
@@ -104,6 +132,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('alert', 'Informe um placar válido, de 0 a 30.');
             redirect($back);
         }
+        $stmt = db()->prepare('SELECT 1 FROM matches WHERE id = ?');
+        $stmt->execute([$matchId]);
+        if (!$stmt->fetch()) {
+            flash_set('alert', 'Jogo não encontrado.');
+            redirect($back);
+        }
 
         db()->prepare('UPDATE matches SET home_score = ?, away_score = ? WHERE id = ?')
             ->execute([(int) $home, (int) $away, $matchId]);
@@ -113,6 +147,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$matchId]);
         flash_set('notice', 'Salvo. ' . plural((int) $stmt->fetchColumn(), 'palpite recalculado', 'palpites recalculados') . '.');
         redirect($back);
+    }
+
+    if ($action === 'import_preview' || $action === 'import_save') {
+        // Importação em lote: sempre mostra a conferência; só grava se não houver erro.
+        $tab = 'importar';
+        $importLeague = (int) ($_POST['league_id'] ?? 0);
+        $importText = (string) ($_POST['import_text'] ?? '');
+        $old = ['league_id' => $importLeague, 'import_text' => $importText];
+
+        $stmt = db()->prepare('SELECT id FROM leagues WHERE id = ?');
+        $stmt->execute([$importLeague]);
+        if (!$stmt->fetch()) {
+            $fieldErrors['league_id'] = 'Escolha uma liga.';
+        }
+        if (trim($importText) === '') {
+            $fieldErrors['import_text'] = 'Cole pelo menos uma linha com um jogo.';
+        } elseif (strlen($importText) > 100000) {
+            $fieldErrors['import_text'] = 'Texto grande demais. Divida em partes de até 500 jogos.';
+        }
+
+        if (!$fieldErrors) {
+            $importPreview = parse_match_import($importText, $importLeague);
+            $c = $importPreview['count'];
+            if ($action === 'import_save' && $c['error'] === 0 && $c['ok'] > 0) {
+                $saved = save_match_import($importPreview, $importLeague);
+                flash_set('notice', plural($saved, 'jogo importado', 'jogos importados') . '.'
+                    . ($c['skip'] > 0 ? ' ' . plural($c['skip'], 'linha ignorada', 'linhas ignoradas') . ' (já cadastradas ou repetidas).' : ''));
+                redirect(admin_url(['tab' => 'lancar', 'liga' => $importLeague]));
+            }
+        }
+    }
+
+    if ($action === 'reset_link') {
+        // Alternativa quando o e-mail não chega: a administração gera o link e manda por outro meio.
+        $targetId = (int) ($_POST['user_id'] ?? 0);
+        $stmt = db()->prepare('SELECT id, name, email FROM users WHERE id = ?');
+        $stmt->execute([$targetId]);
+        $target = $stmt->fetch();
+        if (!$target) {
+            flash_set('alert', 'Usuário não encontrado.');
+            redirect(admin_url(['tab' => 'usuarios']));
+        }
+        $token = create_password_reset((int) $target['id'], 'admin');
+        flash_set('admin_reset', [
+            'name' => $target['name'],
+            'email' => $target['email'],
+            'url' => password_reset_url($token),
+        ]);
+        redirect(admin_url(['tab' => 'usuarios', 'q' => $target['email']]));
     }
 
     if ($action === 'clear_score') {
@@ -128,7 +211,12 @@ $leagues = db()->query('SELECT id, name, code FROM leagues ORDER BY name')->fetc
 
 page_start('Administração', $user, 'wrap', 'admin');
 ?>
-<h1 class="h-page">Administração</h1>
+<div class="page-head admin-head">
+    <div>
+        <p class="eyebrow">Só para a administração do site</p>
+        <h1 class="h-page">Administração</h1>
+    </div>
+</div>
 
 <nav class="tabs" aria-label="Seções da administração">
     <?php foreach ($tabs as $key => $label): ?>
@@ -150,8 +238,9 @@ page_start('Administração', $user, 'wrap', 'admin');
         $where[] = 'm.round = ?';
         $params[] = $filterRodada;
     }
+    $where[] = not_void_sql('m'); // adiados e cancelados não esperam placar
     $sql = 'SELECT m.*, l.name AS league_name FROM matches m JOIN leagues l ON l.id = m.league_id'
-        . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
+        . ' WHERE ' . implode(' AND ', $where)
         . ' ORDER BY m.kickoff_at, m.id LIMIT 1000';
     $stmt = db()->prepare($sql);
     $stmt->execute($params);
@@ -251,9 +340,33 @@ page_start('Administração', $user, 'wrap', 'admin');
          FROM matches m
          JOIN leagues l ON l.id = m.league_id
          ORDER BY m.kickoff_at DESC, m.id DESC
-         LIMIT 200'
+         LIMIT 500'
     )->fetchAll();
+    $syncState = sync_state();
     ?>
+    <section class="panel stack sync-panel" aria-labelledby="sec-sync">
+        <h2 class="section-title" id="sec-sync">Jogos automáticos</h2>
+        <p class="help">Jogos e placares do Brasileirão, da Copa do Brasil e da Libertadores vêm da ESPN e se atualizam sozinhos (a cada 5 minutos, ou a cada minuto com jogo ao vivo).</p>
+        <p class="meta">
+            <?php if (!empty($syncState['last_quick'])): ?>
+                Última atualização: <?= e(date('d/m', (int) $syncState['last_quick']) . ' às ' . kick_clock((int) $syncState['last_quick'])) ?>.
+            <?php else: ?>
+                Ainda não sincronizou.
+            <?php endif; ?>
+            <?php if (!empty($syncState['last_full'])): ?>
+                Tabela completa: <?= e(date('d/m', (int) $syncState['last_full']) . ' às ' . kick_clock((int) $syncState['last_full'])) ?>.
+            <?php endif; ?>
+        </p>
+        <?php if (!empty($syncState['last_error'])): ?>
+            <?php alert_box(['Último erro: ' . $syncState['last_error']]); ?>
+        <?php endif; ?>
+        <form method="post" action="admin_matches.php?tab=jogos" class="actions">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="sync">
+            <button type="submit" class="btn ghost" data-busy="Sincronizando…">Sincronizar agora</button>
+        </form>
+    </section>
+
     <details class="disclosure new-match"<?= $fieldErrors ? ' open' : '' ?>>
         <summary class="btn primary">Cadastrar jogo</summary>
         <div class="disclosure-body">
@@ -296,17 +409,174 @@ page_start('Administração', $user, 'wrap', 'admin');
         <?php if (!$matches): ?>
             <p class="empty-line">Nenhum jogo cadastrado. Comece pelo cadastro de jogos.</p>
         <?php else: ?>
-            <p class="meta">Os 200 mais recentes. Para lançar um placar, use a aba Lançar resultados.</p>
+            <p class="meta">Os 500 mais recentes. Para lançar um placar, use a aba Lançar resultados.</p>
             <ul class="list">
                 <?php foreach ($matches as $m):
                     $ts = strtotime($m['kickoff_at']); ?>
                     <li class="list-row">
-                        <span class="league"><?= e($m['league_name']) ?>, rodada <?= (int) $m['round'] ?></span>
-                        <span class="list-teams"><?= e($m['home_team']) ?> × <?= e($m['away_team']) ?></span>
+                        <span class="league"><?= e($m['league_name']) ?>, <?= e(mb_strtolower(round_label($m))) ?><?= is_void($m) ? ' · adiado ou cancelado' : '' ?></span>
+                        <span class="list-teams"><?= team_crest($m['home_team'], 'sm') ?><?= e($m['home_team']) ?> <span class="vs">×</span> <?= team_crest($m['away_team'], 'sm') ?><?= e($m['away_team']) ?></span>
                         <span class="list-meta"><?= e(date('d/m', $ts) . ' às ' . kick_clock($ts)) ?></span>
                         <span class="list-meta"><?= $m['home_score'] !== null
                             ? 'Placar ' . (int) $m['home_score'] . ' × ' . (int) $m['away_score']
                             : 'Sem resultado' ?></span>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </section>
+
+<?php elseif ($tab === 'importar'):
+    $importLeagueSel = (int) ($old['league_id'] ?? 0);
+    ?>
+    <section class="panel stack import-form">
+        <h2 class="section-title">Importar jogos em lote</h2>
+        <p class="help">Uma linha por jogo, com 4 colunas separadas por ponto e vírgula (ou tabulação, ao colar de uma planilha):
+            <strong>rodada; data e hora; mandante; visitante</strong>. Horário de Brasília.</p>
+        <pre class="import-example">1; 25/10/2026 16:00; Flamengo; Palmeiras
+1; 25/10/2026 18h30; Corinthians; São Paulo
+2; 01/11 16h; Palmeiras; Corinthians</pre>
+        <p class="help">Antes de gravar, você confere cada linha. Jogos já cadastrados na mesma liga e rodada são ignorados.</p>
+        <?php alert_box(array_values(array_filter($fieldErrors, function ($k) {
+            return in_array($k, ['league_id', 'import_text'], true);
+        }, ARRAY_FILTER_USE_KEY))); ?>
+        <form method="post" action="admin_matches.php?tab=importar" class="stack">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="import_preview">
+            <div class="field<?= isset($fieldErrors['league_id']) ? ' is-invalid' : '' ?>">
+                <label for="i-liga">Liga</label>
+                <div class="control">
+                    <select id="i-liga" name="league_id" required>
+                        <?php foreach ($leagues as $league): ?>
+                            <option value="<?= (int) $league['id'] ?>"<?= $importLeagueSel === (int) $league['id'] ? ' selected' : '' ?>><?= e($league['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="field<?= isset($fieldErrors['import_text']) ? ' is-invalid' : '' ?>">
+                <label for="i-texto">Jogos</label>
+                <div class="control">
+                    <textarea id="i-texto" name="import_text" rows="10" required spellcheck="false"
+                              placeholder="1; 25/10/2026 16:00; Flamengo; Palmeiras"><?= e((string) ($old['import_text'] ?? '')) ?></textarea>
+                </div>
+            </div>
+            <div class="actions"><button type="submit" class="btn primary" data-busy="Conferindo…">Conferir linhas</button></div>
+        </form>
+    </section>
+
+    <?php if ($importPreview):
+        $ic = $importPreview['count'];
+        $statusLabel = ['ok' => 'Pronto', 'skip' => 'Ignorado', 'error' => 'Erro'];
+        ?>
+        <section class="admin-section import-preview" aria-labelledby="sec-conferencia">
+            <h2 class="section-title" id="sec-conferencia">Conferência</h2>
+            <p class="meta">
+                <?= e(plural($ic['ok'], 'jogo pronto', 'jogos prontos')) ?>,
+                <?= e(plural($ic['skip'], 'ignorado', 'ignorados')) ?>,
+                <?= e(plural($ic['error'], 'linha com erro', 'linhas com erro')) ?>.
+            </p>
+            <?php if ($ic['error'] > 0): ?>
+                <div class="alert" role="alert"><p>Corrija as linhas com erro no texto acima e confira de novo. Nada foi gravado.</p></div>
+            <?php endif; ?>
+            <div class="table-wrap">
+                <table class="import-table">
+                    <thead>
+                        <tr><th scope="col">Linha</th><th scope="col">Rodada</th><th scope="col">Data e hora</th><th scope="col">Jogo</th><th scope="col">Situação</th></tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($importPreview['rows'] as $r): ?>
+                        <tr class="is-<?= e($r['status']) ?>">
+                            <th scope="row"><?= (int) $r['line'] ?></th>
+                            <?php if ($r['status'] === 'error' && $r['round'] === null && $r['kickoff'] === null && $r['home'] === ''): ?>
+                                <td colspan="3"><code><?= e(mb_strimwidth($r['raw'], 0, 120, '…')) ?></code></td>
+                            <?php else: ?>
+                                <td><?= $r['round'] !== null ? (int) $r['round'] : '–' ?></td>
+                                <td><?= $r['kickoff'] !== null ? e(date('d/m/Y', strtotime($r['kickoff'])) . ' às ' . kick_clock(strtotime($r['kickoff']))) : '–' ?></td>
+                                <td><?= e($r['home']) ?> × <?= e($r['away']) ?></td>
+                            <?php endif; ?>
+                            <td><strong><?= e($statusLabel[$r['status']]) ?></strong><?= $r['message'] !== '' ? ': ' . e($r['message']) : '' ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php if ($ic['error'] === 0 && $ic['ok'] > 0): ?>
+                <form method="post" action="admin_matches.php?tab=importar" class="actions">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action" value="import_save">
+                    <input type="hidden" name="league_id" value="<?= (int) $old['league_id'] ?>">
+                    <input type="hidden" name="import_text" value="<?= e((string) $old['import_text']) ?>">
+                    <button type="submit" class="btn primary" data-busy="Gravando…">Gravar <?= e(plural($ic['ok'], 'jogo', 'jogos')) ?></button>
+                </form>
+            <?php elseif ($ic['error'] === 0): ?>
+                <p class="empty-line">Nenhum jogo novo para gravar.</p>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
+
+<?php elseif ($tab === 'usuarios'):
+    $q = trim((string) ($_GET['q'] ?? ''));
+    $adminReset = flash_take('admin_reset');
+    if ($q !== '') {
+        $like = '%' . addcslashes($q, '%_\\') . '%';
+        $stmt = db()->prepare('SELECT id, name, email, created_at FROM users WHERE name LIKE ? OR email LIKE ? ORDER BY name LIMIT 50');
+        $stmt->execute([$like, $like]);
+    } else {
+        $stmt = db()->query('SELECT id, name, email, created_at FROM users ORDER BY created_at DESC LIMIT 50');
+    }
+    $users = $stmt->fetchAll();
+    ?>
+    <?php if ($adminReset): ?>
+        <section class="panel stack admin-reset-link" role="status">
+            <h2 class="section-title">Link de redefinição gerado</h2>
+            <p>Mande este link para <strong><?= e($adminReset['name']) ?></strong> (<?= e($adminReset['email']) ?>) por um canal seguro. Vale por 24 horas e funciona uma vez só. Ele não aparece de novo.</p>
+            <div class="copy-box">
+                <label class="copy-label" for="admin-reset-url">Link</label>
+                <div class="copy-row">
+                    <input id="admin-reset-url" type="text" readonly value="<?= e($adminReset['url']) ?>" data-select-on-focus>
+                </div>
+                <div class="copy-actions">
+                    <button type="button" class="btn ghost small" data-copy="admin-reset-url"><?= icon('copy') ?>Copiar link</button>
+                    <span class="copy-status" role="status" data-copy-status></span>
+                </div>
+            </div>
+        </section>
+    <?php endif; ?>
+
+    <form method="get" action="admin_matches.php" class="filters">
+        <input type="hidden" name="tab" value="usuarios">
+        <div class="field">
+            <label for="f-q">Buscar por nome ou e-mail</label>
+            <div class="control">
+                <input id="f-q" type="search" name="q" maxlength="150" value="<?= e($q) ?>">
+            </div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn ghost">Buscar</button>
+            <?php if ($q !== ''): ?>
+                <a class="btn ghost" href="admin_matches.php?tab=usuarios">Limpar</a>
+            <?php endif; ?>
+        </div>
+    </form>
+
+    <section class="admin-section">
+        <h2 class="section-title">Usuários</h2>
+        <p class="meta"><?= $q !== '' ? 'Resultados da busca (até 50).' : 'Os 50 cadastros mais recentes.' ?> Se o e-mail de "Esqueci minha senha" não chegar, gere aqui um link de redefinição.</p>
+        <?php if (!$users): ?>
+            <p class="empty-line">Ninguém encontrado.</p>
+        <?php else: ?>
+            <ul class="list">
+                <?php foreach ($users as $u): ?>
+                    <li class="list-row user-row">
+                        <span class="list-teams"><?= e($u['name']) ?></span>
+                        <span class="list-meta"><?= e($u['email']) ?></span>
+                        <span class="list-meta">Desde <?= e(date('d/m/Y', strtotime($u['created_at']))) ?></span>
+                        <form method="post" action="admin_matches.php?tab=usuarios">
+                            <?= csrf_field() ?>
+                            <input type="hidden" name="action" value="reset_link">
+                            <input type="hidden" name="user_id" value="<?= (int) $u['id'] ?>">
+                            <button type="submit" class="btn ghost small" data-busy="Gerando…">Gerar link de nova senha</button>
+                        </form>
                     </li>
                 <?php endforeach; ?>
             </ul>
@@ -362,8 +632,8 @@ function admin_row(array $m, array $filters): void
     ?>
     <li class="admin-row" id="jogo-<?= $id ?>">
         <div class="admin-info">
-            <span class="league"><?= e($m['league_name']) ?>, rodada <?= (int) $m['round'] ?></span>
-            <p class="admin-teams"><?= e($m['home_team']) ?> <span class="vs" aria-hidden="true">×</span> <?= e($m['away_team']) ?></p>
+            <span class="league"><?= e($m['league_name']) ?>, <?= e(mb_strtolower(round_label($m))) ?><?= is_void($m) ? ' · adiado ou cancelado' : '' ?></span>
+            <p class="admin-teams"><?= team_crest($m['home_team'], 'sm') ?><?= e($m['home_team']) ?> <span class="vs" aria-hidden="true">×</span> <?= team_crest($m['away_team'], 'sm') ?><?= e($m['away_team']) ?></p>
             <span class="list-meta"><?= e(date('d/m', $ts) . ' às ' . kick_clock($ts)) ?></span>
         </div>
 
@@ -372,13 +642,15 @@ function admin_row(array $m, array $filters): void
             <input type="hidden" name="action" value="score">
             <input type="hidden" name="match_id" value="<?= $id ?>">
             <?= $hidden ?>
-            <label class="visually-hidden" for="s-h-<?= $id ?>">Gols de <?= e($m['home_team']) ?></label>
-            <input id="s-h-<?= $id ?>" class="tile small" type="number" name="home_score" min="0" max="30" inputmode="numeric"
-                   enterkeyhint="next" required value="<?= $finished ? (int) $m['home_score'] : '' ?>">
-            <span class="colon" aria-hidden="true">:</span>
-            <label class="visually-hidden" for="s-a-<?= $id ?>">Gols de <?= e($m['away_team']) ?></label>
-            <input id="s-a-<?= $id ?>" class="tile small" type="number" name="away_score" min="0" max="30" inputmode="numeric"
-                   enterkeyhint="done" required value="<?= $finished ? (int) $m['away_score'] : '' ?>">
+            <span class="score">
+                <label class="visually-hidden" for="s-h-<?= $id ?>">Gols de <?= e($m['home_team']) ?></label>
+                <input id="s-h-<?= $id ?>" class="tile small" type="number" name="home_score" min="0" max="30" inputmode="numeric"
+                       enterkeyhint="next" required value="<?= $finished ? (int) $m['home_score'] : '' ?>">
+                <span class="colon" aria-hidden="true">:</span>
+                <label class="visually-hidden" for="s-a-<?= $id ?>">Gols de <?= e($m['away_team']) ?></label>
+                <input id="s-a-<?= $id ?>" class="tile small" type="number" name="away_score" min="0" max="30" inputmode="numeric"
+                       enterkeyhint="done" required value="<?= $finished ? (int) $m['away_score'] : '' ?>">
+            </span>
             <button type="submit" class="btn primary small" data-busy="Salvando…">Salvar</button>
         </form>
 

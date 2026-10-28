@@ -35,15 +35,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (strlen($new) < 8) {
             $errors['new_password'] = 'A nova senha precisa ter pelo menos 8 caracteres.';
+        } elseif (strlen($new) > 200) {
+            $errors['new_password'] = 'A nova senha pode ter no máximo 200 caracteres.';
         }
         if ($new !== $confirm) {
             $errors['confirm_password'] = 'A confirmação não é igual à nova senha.';
         }
         if (!$errors) {
-            db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-                ->execute([password_hash($new, PASSWORD_DEFAULT), $user['id']]);
+            $hash = password_hash($new, PASSWORD_DEFAULT);
+            db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([$hash, $user['id']]);
+            // Outros aparelhos logados saem; este continua.
             session_regenerate_id(true);
-            flash_set('perfil', ['block' => 'senha', 'ok' => 'Senha trocada. Use a nova na próxima vez que entrar.']);
+            refresh_password_stamp($hash);
+            invalidate_password_resets((int) $user['id']);
+            flash_set('perfil', ['block' => 'senha', 'ok' => 'Senha trocada. Os outros aparelhos em que você estava logado saíram da conta.']);
             redirect('perfil.php#bloco-senha');
         }
     }
@@ -55,15 +60,19 @@ $firstError = $errors ? array_key_first($errors) : null;
 
 page_start('Conta', $user, 'wrap', 'conta');
 ?>
-<div class="page-head">
+<div class="profile-head">
+    <?= avatar((string) $me['name'], 'avatar-lg') ?>
     <div>
-        <h1 class="h-page">Sua conta</h1>
+        <p class="eyebrow">Sua conta</p>
+        <h1 class="h-page"><?= e($me['name']) ?></h1>
         <p class="lede"><?= e($me['email']) ?> <span class="muted-small">(usado para entrar)</span></p>
     </div>
 </div>
 
+<div class="settings-grid">
+
 <section class="block" id="bloco-nome">
-    <h2 class="section-title">Seu nome</h2>
+    <div class="block-head"><span class="block-icon"><?= icon('user') ?></span><h2 class="section-title">Seu nome</h2></div>
     <p class="help">Seu nome aparece no ranking dos seus bolões.</p>
     <?php if ($perfilFlash && $perfilFlash['block'] === 'nome'): notice($perfilFlash['ok']); endif; ?>
     <form method="post" action="perfil.php#bloco-nome" class="panel stack">
@@ -76,7 +85,7 @@ page_start('Conta', $user, 'wrap', 'conta');
 </section>
 
 <section class="block" id="bloco-senha">
-    <h2 class="section-title">Trocar senha</h2>
+    <div class="block-head"><span class="block-icon"><?= icon('lock') ?></span><h2 class="section-title">Trocar senha</h2></div>
     <?php if ($perfilFlash && $perfilFlash['block'] === 'senha'): notice($perfilFlash['ok']); endif; ?>
     <form method="post" action="perfil.php#bloco-senha" class="panel stack">
         <?= csrf_field() ?>
@@ -91,12 +100,14 @@ page_start('Conta', $user, 'wrap', 'conta');
     </form>
 </section>
 
-<section class="block">
-    <h2 class="section-title">Sair da conta</h2>
-    <form method="post" action="logout.php">
+<section class="block is-wide logout-block">
+    <div class="block-head"><span class="block-icon"><?= icon('logout') ?></span><h2 class="section-title">Sair da conta</h2></div>
+    <p class="help">Neste aparelho você precisará entrar de novo.</p>
+    <form method="post" action="logout.php" class="actions">
         <?= csrf_field() ?>
-        <button type="submit" class="btn ghost">Sair da conta</button>
+        <button type="submit" class="btn ghost"><?= icon('logout') ?>Sair da conta</button>
     </form>
 </section>
+</div>
 <?php
 page_end();

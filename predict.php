@@ -12,10 +12,16 @@ $groupId = (int) ($_POST['group_id'] ?? 0);
 $round = (int) ($_POST['round'] ?? 0);
 require_member($groupId, $user['id']);
 
-// Jogos desta rodada, das ligas do grupo. Só os abertos aceitam palpite.
+// Jogos desta rodada, do campeonato escolhido (que precisa ser do grupo). Só os abertos aceitam palpite.
 $leagueIds = group_league_ids($groupId);
+$leagueId = (int) ($_POST['league'] ?? 0);
+if (in_array($leagueId, $leagueIds, true)) {
+    $leagueIds = [$leagueId];
+} else {
+    $leagueId = 0;
+}
 $stmt = db()->prepare(
-    'SELECT id, kickoff_at, home_team, away_team FROM matches
+    'SELECT * FROM matches
      WHERE league_id IN (' . placeholders($leagueIds) . ') AND round = ?'
 );
 $stmt->execute([...$leagueIds, $round]);
@@ -23,6 +29,9 @@ $stmt->execute([...$leagueIds, $round]);
 $matches = [];
 $allowed = [];
 foreach ($stmt->fetchAll() as $match) {
+    if (is_void($match)) {
+        continue; // adiado ou cancelado: fora do bolão
+    }
     $id = (int) $match['id'];
     $matches[$id] = $match;
     if (is_open($match)) {
@@ -57,7 +66,7 @@ foreach ($preds as $matchId => $score) {
     $label = $match['home_team'] . ' × ' . $match['away_team'];
     $reason = null;
     if (!isset($allowed[$matchId])) {
-        $reason = 'o jogo já começou';
+        $reason = $match['home_score'] !== null ? 'o jogo já terminou' : 'o jogo já começou';
     } elseif ($home === '' || $away === '') {
         $reason = $home === '' ? 'falta o placar do mandante' : 'falta o placar do visitante';
     } elseif (!ctype_digit($home) || !ctype_digit($away) || (int) $home > 30 || (int) $away > 30) {
@@ -81,4 +90,4 @@ flash_set('predict', [
     'keep' => $keep,
 ]);
 
-redirect('group.php?id=' . $groupId . '&round=' . $round);
+redirect('group.php?id=' . $groupId . ($leagueId ? '&league=' . $leagueId : '') . '&round=' . $round);

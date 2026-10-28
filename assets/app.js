@@ -5,7 +5,9 @@
    - mostrar ou ocultar senha;
    - contador "x de y preenchidos" e aviso de alterações não salvas;
    - botão de exclusão só libera depois de digitar o nome do bolão;
-   - botões de envio mostram "Salvando…" e não enviam duas vezes. */
+   - botões de envio mostram "Salvando…" e não enviam duas vezes;
+   - botão de tema claro ou escuro (a escolha fica no localStorage);
+   - seletores com data-autosubmit enviam o formulário ao trocar a opção. */
 (function () {
     'use strict';
 
@@ -63,6 +65,7 @@
 
     function tick() {
         var now = Date.now();
+        var SOON = 3600000; // "fechando em breve": falta menos de 1 hora
         var cards = document.querySelectorAll('li.match[data-kick]');
         var openCount = 0;
         var firstOpen = null;
@@ -73,11 +76,13 @@
             var kick = parseInt(li.getAttribute('data-kick'), 10) * 1000;
             if (kick <= now) {
                 closeCard(li);
+                li.classList.remove('is-soon');
                 var t = li.querySelector('time[data-kickoff]');
                 if (t) { t.textContent = phrase(kick, now, false); t.classList.remove('is-soon'); }
                 continue;
             }
             openCount++;
+            li.classList.toggle('is-soon', kick - now < SOON);
             if (firstOpen === null || kick < firstOpen) { firstOpen = kick; }
             var time = li.querySelector('time[data-kickoff]');
             if (time) {
@@ -115,6 +120,10 @@
                 var current = input.value === '' ? 0 : parseInt(input.value, 10);
                 input.value = clampScore(current + parseInt(btn.getAttribute('data-step'), 10));
                 input.dispatchEvent(new Event('input', { bubbles: true }));
+                // Pequeno "pulo" do número, para mostrar que mudou
+                input.classList.remove('is-bump');
+                void input.offsetWidth;
+                input.classList.add('is-bump');
                 input.focus();
             });
         }
@@ -130,21 +139,44 @@
         var dirty = false;
         for (var i = 0; i < cards.length; i++) {
             var inputs = cards[i].querySelectorAll('input.tile');
+            var changed = false;
             if (inputs.length === 2 && inputs[0].value !== '' && inputs[1].value !== '') { filled++; }
             for (var j = 0; j < inputs.length; j++) {
-                if (inputs[j].value !== inputs[j].defaultValue) { dirty = true; }
+                if (inputs[j].value !== inputs[j].defaultValue) { changed = true; }
             }
+            cards[i].classList.toggle('is-changed', changed);
+            if (changed) { dirty = true; }
         }
         var filledEl = bar.querySelector('[data-filled]');
         var totalEl = bar.querySelector('[data-total]');
         if (filledEl) { filledEl.textContent = filled; }
         if (totalEl) { totalEl.textContent = cards.length; }
 
+        var fill = bar.querySelector('[data-progress]');
+        if (fill) {
+            var pct = cards.length ? Math.round(filled * 100 / cards.length) : 0;
+            fill.style.width = pct + '%';
+            fill.parentNode.classList.toggle('is-full', cards.length > 0 && filled === cards.length);
+        }
+
         var badge = bar.querySelector('[data-dirty]');
         if (badge) { badge.hidden = !dirty; }
         var status = bar.querySelector('[data-save-status]');
-        if (status && dirty) { status.textContent = 'Alterações ainda não salvas.'; }
-        form.setAttribute('data-is-dirty', dirty ? '1' : '0');
+        if (status) {
+            // Guarda o texto do servidor para voltar a ele se a pessoa desfizer as mudanças.
+            if (!status.hasAttribute('data-initial')) {
+                status.setAttribute('data-initial', status.textContent.trim());
+                status.setAttribute('data-initial-saved', status.classList.contains('is-saved') ? '1' : '0');
+            }
+            if (dirty) {
+                status.textContent = 'Alterações ainda não salvas.';
+                status.classList.remove('is-saved');
+            } else {
+                status.textContent = status.getAttribute('data-initial');
+                status.classList.toggle('is-saved', status.getAttribute('data-initial-saved') === '1');
+            }
+        }
+        if (form) { form.setAttribute('data-is-dirty', dirty ? '1' : '0'); }
     }
 
     function setupDirtyGuard() {
@@ -313,6 +345,64 @@
         });
     }
 
+    /* ---------- Seletor que envia sozinho (ranking por rodada) ---------- */
+    function setupAutosubmit() {
+        var selects = document.querySelectorAll('select[data-autosubmit]');
+        for (var i = 0; i < selects.length; i++) {
+            (function (select) {
+                var form = select.form;
+                if (!form) { return; }
+                // O botão "Ver" só é preciso sem JavaScript.
+                var btn = form.querySelector('button[type="submit"]');
+                if (btn) { btn.hidden = true; }
+                select.addEventListener('change', function () {
+                    if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+                });
+            })(selects[i]);
+        }
+    }
+
+    /* ---------- Tema claro ou escuro ---------- */
+    function currentTheme() {
+        var chosen = document.documentElement.getAttribute('data-theme');
+        if (chosen === 'light' || chosen === 'dark') { return chosen; }
+        return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+
+    function applyThemeLabel(btn) {
+        var next = currentTheme() === 'dark' ? 'claro' : 'escuro';
+        btn.setAttribute('aria-label', 'Mudar para o tema ' + next);
+        btn.setAttribute('title', 'Tema ' + next);
+    }
+
+    function setupTheme() {
+        var buttons = document.querySelectorAll('[data-theme-toggle]');
+        for (var i = 0; i < buttons.length; i++) {
+            (function (btn) {
+                btn.hidden = false;
+                applyThemeLabel(btn);
+                btn.addEventListener('click', function () {
+                    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    try { localStorage.setItem('bolao-tema', next); } catch (e) {}
+                    var metas = document.querySelectorAll('meta[name="theme-color"]');
+                    for (var j = 0; j < metas.length; j++) {
+                        metas[j].setAttribute('content', next === 'light' ? '#f3f5fa' : '#0a1120');
+                    }
+                    applyThemeLabel(btn);
+                });
+            })(buttons[i]);
+        }
+        // Sem escolha salva, acompanha a mudança do sistema.
+        if (window.matchMedia) {
+            var mq = window.matchMedia('(prefers-color-scheme: dark)');
+            var onChange = function () {
+                for (var k = 0; k < buttons.length; k++) { applyThemeLabel(buttons[k]); }
+            };
+            if (mq.addEventListener) { mq.addEventListener('change', onChange); } else if (mq.addListener) { mq.addListener(onChange); }
+        }
+    }
+
     /* ---------- Rolar a faixa de rodadas até a rodada atual ---------- */
     function setupCurrentRound() {
         var strip = document.querySelector('[data-current-scroll]');
@@ -323,6 +413,8 @@
     }
 
     function init() {
+        setupTheme();
+        setupAutosubmit();
         setupSteppers();
         setupReveal();
         setupCopy();

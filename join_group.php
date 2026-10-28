@@ -43,10 +43,17 @@ if ($code === '') {
 
 if ($isPost && $group) {
     $password = (string) ($_POST['password'] ?? '');
-    if ($group['password_hash'] !== null && !password_verify($password, $group['password_hash'])) {
+    // Senha do bolão: mesmo limite do login (5 erros em 15 min por bolão + IP).
+    $throttleKey = 'bolao:' . (int) $group['id'];
+    $wait = $group['password_hash'] !== null ? login_lock_seconds($throttleKey, client_ip()) : 0;
+    if ($wait > 0) {
+        $passwordError = 'Muitas tentativas erradas. Espere ' . wait_text($wait) . ' e tente de novo.';
+    } elseif ($group['password_hash'] !== null && !password_verify($password, $group['password_hash'])) {
+        login_record_failure($throttleKey, client_ip());
         $passwordError = 'Senha incorreta. Confira com quem organiza.';
     } else {
-        db()->prepare('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)')
+        // IGNORE: dois cliques seguidos não geram erro de chave duplicada.
+        db()->prepare('INSERT IGNORE INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)')
             ->execute([$group['id'], $user['id'], 'member']);
         flash_set('notice', 'Você entrou. Dê seu primeiro palpite.');
         redirect('group.php?id=' . (int) $group['id']);
@@ -69,14 +76,18 @@ if ($group):
     $stmt->execute([$group['id']]);
     $leagueNames = array_column($stmt->fetchAll(), 'name');
     ?>
-    <section class="panel stack invite-preview">
+    <section class="panel invite-preview">
+        <?= avatar($group['name'], 'avatar-group avatar-lg') ?>
         <p class="kicker-text">Você foi convidado para</p>
         <h1 class="h-page"><?= e($group['name']) ?></h1>
         <p class="meta"><?= e(implode(', ', $leagueNames)) ?></p>
-        <p class="meta"><?= e(plural($members, 'participante', 'participantes')) ?>, organizado por <?= e($ownerName) ?></p>
-        <?php if ($group['password_hash'] !== null): ?>
-            <p class="meta">Este bolão pede senha. Peça ao organizador.</p>
-        <?php endif; ?>
+        <p class="invite-facts">
+            <span class="pill is-muted"><?= icon('users') ?><?= e(plural($members, 'participante', 'participantes')) ?></span>
+            <span class="pill is-muted"><?= icon('user') ?>Organizado por <?= e($ownerName) ?></span>
+            <?php if ($group['password_hash'] !== null): ?>
+                <span class="pill is-pending"><?= icon('lock') ?>Pede senha. Peça ao organizador.</span>
+            <?php endif; ?>
+        </p>
     </section>
 
     <?php alert_box($error ? [$error] : []); ?>
@@ -93,16 +104,22 @@ if ($group):
     <?php
 else:
     ?>
-    <h1 class="h-page">Entrar em bolão</h1>
-    <p class="lede">Use o código ou o link que o organizador enviou.</p>
+    <div class="join-head">
+        <span class="fail-icon"><?= icon('ticket') ?></span>
+        <h1 class="h-page">Entrar em bolão</h1>
+        <p class="lede">Use o código ou o link que o organizador enviou.</p>
+    </div>
 
     <?php alert_box($error ? [$error] : []); ?>
 
     <form method="get" action="join_group.php" class="panel auth-form">
-        <?php field('code', 'Código de convite', ['value' => $code, 'maxlength' => 20, 'autocomplete' => 'off', 'required' => true,
-            'help' => 'Maiúsculas e espaços não importam.', 'autofocus' => true]); ?>
+        <div class="code-input">
+            <?php field('code', 'Código de convite', ['value' => $code, 'maxlength' => 20, 'autocomplete' => 'off', 'required' => true,
+                'help' => 'Maiúsculas e espaços não importam.', 'autofocus' => true, 'placeholder' => 'a1b2c3d4e5']); ?>
+        </div>
         <button type="submit" class="btn primary wide">Continuar</button>
     </form>
+    <p class="muted center auth-switch">Quer organizar? <a href="create_group.php">Crie um bolão</a></p>
     <?php
 endif;
 
