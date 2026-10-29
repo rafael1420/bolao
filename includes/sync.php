@@ -15,7 +15,7 @@ const SYNC_LEAGUES = [
 const SYNC_FULL_EVERY = 6 * 3600;  // tabela completa, para pegar jogos novos e remarcados
 const SYNC_IDLE_EVERY = 5 * 60;
 const SYNC_LIVE_EVERY = 60;
-const SYNC_SCHEMA = '2';
+const SYNC_SCHEMA = '3';
 
 // A ESPN não informa a rodada do Brasileirão; o TheSportsDB (chave pública de teste) informa.
 // Ele bloqueia quem faz muitas consultas seguidas, então cada sincronização busca poucas rodadas,
@@ -128,7 +128,11 @@ function sync_set_state(array $values): void
     }
 }
 
-/** Cria a tabela de controle e as colunas novas de matches, uma vez só. */
+/**
+ * Cria as tabelas e colunas que faltam (o mesmo que as migrações 001/002 fazem), uma vez só.
+ * Roda antes da página (ensure_schema, em app.php) para o site não quebrar se a migração
+ * não foi importada; e de novo na sincronização, por garantia.
+ */
 function sync_migrate(): void
 {
     $pdo = db();
@@ -143,12 +147,7 @@ function sync_migrate(): void
         return;
     }
 
-    $columns = $pdo->query(
-        "SELECT COLUMN_NAME FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'matches'"
-    )->fetchAll(PDO::FETCH_COLUMN);
-
-    $wanted = [
+    sync_add_columns('matches', [
         'external_id'     => 'ADD COLUMN external_id VARCHAR(50) NULL',
         'round_label'     => 'ADD COLUMN round_label VARCHAR(60) NULL',
         'note'            => 'ADD COLUMN note VARCHAR(60) NULL',
@@ -156,18 +155,54 @@ function sync_migrate(): void
         'status_detail'   => 'ADD COLUMN status_detail VARCHAR(40) NULL',
         'live_home_score' => 'ADD COLUMN live_home_score TINYINT UNSIGNED NULL',
         'live_away_score' => 'ADD COLUMN live_away_score TINYINT UNSIGNED NULL',
-    ];
-    $changes = [];
-    foreach ($wanted as $column => $sql) {
-        if (!in_array($column, $columns, true)) {
-            $changes[] = $sql;
-        }
-    }
-    if ($changes) {
-        $pdo->exec('ALTER TABLE matches ' . implode(', ', $changes));
+        'home_team_id'    => 'ADD COLUMN home_team_id INT UNSIGNED NULL',
+        'away_team_id'    => 'ADD COLUMN away_team_id INT UNSIGNED NULL',
+    ]);
+    $index = $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.STATISTICS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'matches' AND INDEX_NAME = 'idx_league_kick'"
+    )->fetchColumn();
+    if ((int) $index === 0) {
+        $pdo->exec('ALTER TABLE matches ADD INDEX idx_league_kick (league_id, kickoff_at)');
     }
 
-    // Rodada oficial de cada confronto do Brasileirão, vinda do TheSportsDB.
+    sync_add_columns('leagues', [
+        'country'         => "ADD COLUMN country VARCHAR(12) NOT NULL DEFAULT 'OUT'",
+        'kind'            => "ADD COLUMN kind ENUM('liga','copa') NOT NULL DEFAULT 'liga'",
+        'short_name'      => 'ADD COLUMN short_name VARCHAR(40) NULL',
+        'sort_order'      => 'ADD COLUMN sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 999',
+        'logo_url'        => 'ADD COLUMN logo_url VARCHAR(255) NULL',
+        'season_label'    => 'ADD COLUMN season_label VARCHAR(20) NULL',
+        'season_start'    => 'ADD COLUMN season_start DATE NULL',
+        'is_active'       => 'ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1',
+        'synced_full_at'  => 'ADD COLUMN synced_full_at INT UNSIGNED NOT NULL DEFAULT 0',
+        'synced_quick_at' => 'ADD COLUMN synced_quick_at INT UNSIGNED NOT NULL DEFAULT 0',
+        'backfill_day'    => 'ADD COLUMN backfill_day CHAR(8) NULL',
+        'sync_failures'   => 'ADD COLUMN sync_failures TINYINT UNSIGNED NOT NULL DEFAULT 0',
+        'has_live'        => 'ADD COLUMN has_live TINYINT(1) NOT NULL DEFAULT 0',
+    ]);
+
+    sync_add_columns('bolao_groups', [
+        'round_mode'    => "ADD COLUMN round_mode ENUM('rodada','duas','livre') NOT NULL DEFAULT 'rodada'",
+        'deadline_mode' => "ADD COLUMN deadline_mode ENUM('jogo','rodada') NOT NULL DEFAULT 'jogo'",
+    ]);
+
+    // Times da ESPN (escudo, sigla e cores).
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS teams (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            espn_id VARCHAR(20) NOT NULL UNIQUE,
+            name VARCHAR(100) NOT NULL,
+            short_name VARCHAR(60) NULL,
+            abbreviation VARCHAR(10) NULL,
+            logo_url VARCHAR(255) NULL,
+            color CHAR(6) NULL,
+            alt_color CHAR(6) NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) DEFAULT CHARSET = utf8mb4'
+    );
+
+    // Rodada oficial de cada confronto, vinda do TheSportsDB.
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS official_rounds (
             league_id INT UNSIGNED NOT NULL,
@@ -180,6 +215,27 @@ function sync_migrate(): void
     );
 
     sync_set_state(['schema' => SYNC_SCHEMA]);
+}
+
+/** Acrescenta numa tabela as colunas que ainda não existem (coluna => trecho "ADD COLUMN ..."). */
+function sync_add_columns(string $table, array $wanted): void
+{
+    $stmt = db()->prepare(
+        'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+    );
+    $stmt->execute([$table]);
+    $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    $changes = [];
+    foreach ($wanted as $column => $sql) {
+        if (!in_array($column, $columns, true)) {
+            $changes[] = $sql;
+        }
+    }
+    if ($changes) {
+        // $table e $sql vêm sempre do código, nunca do visitante.
+        db()->exec('ALTER TABLE ' . $table . ' ' . implode(', ', $changes));
+    }
 }
 
 /** Garante que as ligas sincronizadas existem. Devolve código => id. */

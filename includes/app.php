@@ -8,9 +8,6 @@ date_default_timezone_set('America/Sao_Paulo');
 
 const PT_DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
-// Jogos e placares automáticos (ESPN): roda depois que a página é entregue. Ver includes/sync.php.
-sync_schedule();
-
 // Erro inesperado (banco fora do ar, bug): registra no log e mostra uma página amigável.
 set_exception_handler(function ($ex) {
     error_log('[bolao] ' . $ex);
@@ -27,6 +24,36 @@ set_exception_handler(function ($ex) {
     }
     fail_page(500, 'Algo deu errado', 'Não foi possível concluir agora. Tente de novo em instantes.', null, [['index.php', 'Voltar ao início']]);
 });
+
+// Colunas e tabelas novas, caso a migração não tenha sido importada; e o catálogo de ligas.
+ensure_schema();
+
+// Jogos e placares automáticos (ESPN): roda depois que a página é entregue. Ver includes/sync.php.
+sync_schedule();
+
+/**
+ * Confere a versão do banco (uma consulta por página). Desatualizado: cria o que falta
+ * (sync_migrate) com uma trava, para duas páginas não alterarem as tabelas ao mesmo tempo.
+ * Depois garante que as ligas do catálogo existem (leagues_seed, só quando o catálogo muda).
+ */
+function ensure_schema(): void
+{
+    $state = sync_state();
+    if (($state['schema'] ?? '') !== SYNC_SCHEMA) {
+        $pdo = db();
+        if ((int) $pdo->query("SELECT GET_LOCK('bolao_migrate', 5)")->fetchColumn() === 1) {
+            try {
+                sync_migrate();
+            } finally {
+                $pdo->query("SELECT RELEASE_LOCK('bolao_migrate')");
+            }
+        }
+        $state = sync_state();
+    }
+    if (function_exists('leagues_seed')) {
+        leagues_seed($state['catalog'] ?? '');
+    }
+}
 
 
 function is_admin(?array $user): bool
