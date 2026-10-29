@@ -1,4 +1,4 @@
-# Bolão
+# Conferência Bolão
 
 Site de bolão de futebol em PHP e MySQL, para hospedagem compartilhada (Hostinger, plano PHP/HTML).
 

@@ -19,7 +19,7 @@ function h(string $value): string
 $errors = [];
 $done = false;
 $values = [
-    'site_name' => 'Bolão',
+    'site_name' => 'Conferência Bolão',
     'host' => 'localhost',
     'name' => '',
     'user' => '',
@@ -37,7 +37,7 @@ $migrationTables = [
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $values['site_name'] = trim($_POST['site_name'] ?? '') ?: 'Bolão';
+    $values['site_name'] = trim($_POST['site_name'] ?? '') ?: 'Conferência Bolão';
     $values['host'] = trim($_POST['host'] ?? '') ?: 'localhost';
     $values['name'] = trim($_POST['name'] ?? '');
     $values['user'] = trim($_POST['user'] ?? '');

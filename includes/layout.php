@@ -65,6 +65,20 @@ function brand_mark(string $class = 'brand-mark'): string
         . '</svg>';
 }
 
+/**
+ * Nome do site em duas cores: a última palavra no tom de destaque ("Conferência" + "Bolão").
+ * Nome de uma palavra só fica todo no tom do texto.
+ */
+function brand_wordmark(): string
+{
+    $name = trim((string) SITE_NAME);
+    $cut = mb_strrpos($name, ' ');
+    if ($cut === false) {
+        return '<span class="wm-a">' . e($name) . '</span>';
+    }
+    return '<span class="wm-a">' . e(mb_substr($name, 0, $cut)) . '</span> <span class="wm-b">' . e(mb_substr($name, $cut + 1)) . '</span>';
+}
+
 /** Número de 0 a 359 sempre igual para o mesmo texto (cor de escudos e avatares). */
 function name_hue(string $text): int
 {
@@ -237,7 +251,7 @@ function auth_pitch(): void
 {
     ?>
     <section class="auth-pitch" aria-label="Sobre o <?= e(SITE_NAME) ?>">
-        <div class="auth-brand"><?= brand_mark() ?><span class="wordmark"><?= e(SITE_NAME) ?></span></div>
+        <div class="auth-brand"><?= brand_mark() ?><span class="wordmark"><?= brand_wordmark() ?></span></div>
         <p class="auth-title">O bolão da <em>sua turma</em>, rodada a rodada.</p>
         <p class="lead">Palpite nos jogos, acompanhe o ranking e tire onda com os amigos. Sem dinheiro, só resenha.</p>
         <ul class="auth-features">
@@ -294,8 +308,8 @@ function page_start(string $title, ?array $user = null, string $width = 'wrap', 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#f3f5fa" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0a1120" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#f4f4fb" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1226" media="(prefers-color-scheme: dark)">
     <meta name="robots" content="noindex">
     <meta name="apple-mobile-web-app-title" content="<?= e(SITE_NAME) ?>">
     <title><?= e($title) ?> | <?= e(SITE_NAME) ?></title>
@@ -308,7 +322,7 @@ function page_start(string $title, ?array $user = null, string $width = 'wrap', 
                     document.documentElement.setAttribute('data-theme', t);
                     var metas = document.querySelectorAll('meta[name="theme-color"]');
                     for (var i = 0; i < metas.length; i++) {
-                        metas[i].setAttribute('content', t === 'light' ? '#f3f5fa' : '#0a1120');
+                        metas[i].setAttribute('content', t === 'light' ? '#f4f4fb' : '#0f1226');
                     }
                 }
             } catch (e) {}
@@ -327,7 +341,7 @@ function page_start(string $title, ?array $user = null, string $width = 'wrap', 
 <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
 <header class="topbar">
     <div class="topbar-inner">
-        <a href="index.php" class="brand"><?= brand_mark() ?><span class="brand-name"><?= e(SITE_NAME) ?></span></a>
+        <a href="index.php" class="brand"><?= brand_mark() ?><span class="brand-name"><?= brand_wordmark() ?></span></a>
         <?php if ($links): ?>
             <nav class="nav" aria-label="Principal">
                 <?php foreach ($links as [$key, $href, $label]): ?>
@@ -372,7 +386,7 @@ function page_end(): void
 {
     $year = date('Y');
     echo "</main>\n"
-        . '<footer class="site-foot"><p>' . e(SITE_NAME) . ' · bolão entre amigos, sem dinheiro envolvido · ' . $year . "</p></footer>\n"
+        . '<footer class="site-foot"><p>' . e(SITE_NAME) . ' · bolão entre amigos, rodada a rodada, sem dinheiro envolvido · ' . $year . "</p></footer>\n"
         . "<script src=\"" . e(asset('app.js')) . "\" defer></script>\n</body>\n</html>\n";
 }
 

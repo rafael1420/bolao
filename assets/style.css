@@ -1,8 +1,8 @@
-/* Bolão: "noite de jogo".
-   Marinho profundo, placar amarelo e números condensados (Big Shoulders Display) sobre texto
-   de leitura fácil (Public Sans). Dois temas: escuro (padrão da marca) e claro, escolhidos pelo
-   sistema ou pelo botão do topo (data-theme no <html>). As peças de placar continuam escuras
-   nos dois temas, como um placar de estádio.
+/* Conferência Bolão: azul-noite e roxo profundo, calmos.
+   Índigo e lavanda, sem neon, com números condensados (Big Shoulders Display) sobre texto
+   de leitura fácil (Public Sans). Dois temas: escuro e claro, escolhidos pelo sistema ou pelo
+   botão do topo (data-theme no <html>). As peças de placar continuam escuras nos dois temas,
+   como um placar de estádio.
 
    Tokens:
    - cores: --bg, --surface(-2/-3), --sunken, --line, --ink(-soft/-faint), --accent, --success, --danger
@@ -296,6 +296,11 @@ main:focus { outline: none; }
     line-height: 1;
     letter-spacing: 0.03em;
     text-transform: uppercase;
+    white-space: nowrap;
+}
+.brand-name .wm-b, .wordmark .wm-b { color: var(--accent-text); }
+@media (max-width: 420px) {
+    .brand-name { font-size: 1.3rem; letter-spacing: .01em; }
 }
 
 .nav { display: none; gap: 2px; margin-left: var(--sp-4); }
@@ -931,7 +936,7 @@ details.confirm > .disclosure-body { border-color: var(--danger-line); backgroun
 .auth-hero { margin: var(--sp-2) 0 var(--sp-5); }
 .wordmark {
     font-family: var(--font-display);
-    font-size: clamp(4.4rem, 22vw, 6rem);
+    font-size: clamp(2.6rem, 13vw, 4.4rem);
     font-weight: 900;
     line-height: 0.85;
     letter-spacing: 0.03em;
@@ -2166,7 +2171,7 @@ main.card > form > button[type="submit"] { width: 100%; margin-top: var(--sp-2);
 }
 
 @media (max-width: 380px) {
-    .brand-name { font-size: 1.45rem; }
+    .brand-name { font-size: 1.15rem; }
     .team { font-size: 1.05rem; }
     .crest { width: 34px; height: 39px; }
     input.tile, span.tile { width: 46px; height: 52px; font-size: 2rem; }
