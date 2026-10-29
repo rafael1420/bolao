@@ -33,6 +33,7 @@ $coreTables = ['users', 'leagues', 'matches', 'bolao_groups', 'group_leagues', '
 $migrationTables = [
     'password_resets' => '001_password_resets_login_attempts.sql',
     'login_attempts' => '001_password_resets_login_attempts.sql',
+    'teams' => '002_ligas_times_rodadas.sql',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

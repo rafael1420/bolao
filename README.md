@@ -20,7 +20,7 @@ São dois arquivos: `bolao-site.zip` (o site) e `schema.sql` (o banco).
 ### 3. Importar o `schema.sql`
 1. Em **Bancos de dados → phpMyAdmin**, selecione o banco `u329075197_bolao`.
 2. Aba **Importar** → escolha o `schema.sql` → **Executar**.
-3. Deve aparecer a lista de 11 tabelas na coluna da esquerda.
+3. Deve aparecer a lista de 12 tabelas na coluna da esquerda.
 
 Em instalação nova, o `schema.sql` já traz tudo. As migrações (abaixo) são só para quem já tinha o banco.
 
@@ -46,11 +46,12 @@ Quando uma versão nova muda o banco, ela traz um arquivo em `sql/migrations/`. 
 2. Aba **Importar** → escolha o arquivo da migração → **Executar**.
 3. Repita para cada migração ainda não importada, em ordem (001, 002, ...).
 
-As migrações só criam o que falta (`CREATE TABLE IF NOT EXISTS`), então importar de novo não estraga nada.
+As migrações só criam o que falta (tabelas com `CREATE TABLE IF NOT EXISTS` e colunas só quando ainda não existem), então importar de novo não estraga nada.
 
 | Migração | O que faz |
 |---|---|
 | `001_password_resets_login_attempts.sql` | Cria `password_resets` (links de "Esqueci minha senha") e `login_attempts` (limite de tentativas de login) |
+| `002_ligas_times_rodadas.sql` | Cria `teams` (escudos e cores dos times); acrescenta país, tipo e controle de sincronização em `leagues`, os times em `matches` e o modo de rodada em `bolao_groups` |
 
 ### Configurações novas no `includes/config.php`
 

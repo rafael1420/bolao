@@ -15,7 +15,33 @@ CREATE TABLE IF NOT EXISTS leagues (
     id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     name        VARCHAR(100) NOT NULL,
     code        VARCHAR(20)  NOT NULL UNIQUE,
-    external_id VARCHAR(50)  NULL          -- id da liga na API externa, se usar
+    external_id VARCHAR(50)  NULL,         -- slug da liga na ESPN (ex.: bra.1)
+    country     VARCHAR(12)  NOT NULL DEFAULT 'OUT', -- país ou região (COUNTRIES em includes/leagues.php)
+    kind        ENUM('liga','copa') NOT NULL DEFAULT 'liga',
+    short_name  VARCHAR(40)  NULL,
+    sort_order  SMALLINT UNSIGNED NOT NULL DEFAULT 999,
+    logo_url    VARCHAR(255) NULL,
+    season_label VARCHAR(20) NULL,         -- ex.: "2026-27"
+    season_start DATE        NULL,         -- início da temporada atual (jogos anteriores ficam fora das rodadas)
+    is_active   TINYINT(1)   NOT NULL DEFAULT 1,
+    synced_full_at  INT UNSIGNED NOT NULL DEFAULT 0, -- controle da sincronização, por liga
+    synced_quick_at INT UNSIGNED NOT NULL DEFAULT 0,
+    backfill_day    CHAR(8)  NULL,
+    sync_failures   TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    has_live        TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Times (ESPN): nome, sigla, escudo e cores. Os jogos guardam também o nome em texto.
+CREATE TABLE IF NOT EXISTS teams (
+    id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    espn_id      VARCHAR(20)  NOT NULL UNIQUE,
+    name         VARCHAR(100) NOT NULL,
+    short_name   VARCHAR(60)  NULL,
+    abbreviation VARCHAR(10)  NULL,
+    logo_url     VARCHAR(255) NULL,
+    color        CHAR(6)      NULL,
+    alt_color    CHAR(6)      NULL,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matches (
@@ -34,8 +60,11 @@ CREATE TABLE IF NOT EXISTS matches (
     status_detail VARCHAR(40) NULL,         -- ex.: "45'+2'"
     live_home_score TINYINT UNSIGNED NULL,  -- placar parcial durante o jogo
     live_away_score TINYINT UNSIGNED NULL,
+    home_team_id INT UNSIGNED NULL,         -- teams.id (NULL em jogo cadastrado à mão)
+    away_team_id INT UNSIGNED NULL,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_league_round (league_id, round),
+    INDEX idx_league_kick (league_id, kickoff_at),
     CONSTRAINT fk_matches_league FOREIGN KEY (league_id) REFERENCES leagues(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -48,6 +77,8 @@ CREATE TABLE IF NOT EXISTS bolao_groups (
     exact_points     TINYINT UNSIGNED NOT NULL DEFAULT 5,
     winner_points    TINYINT UNSIGNED NOT NULL DEFAULT 3,
     goal_diff_points TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    round_mode       ENUM('rodada','duas','livre') NOT NULL DEFAULT 'rodada', -- quais rodadas aceitam palpite
+    deadline_mode    ENUM('jogo','rodada') NOT NULL DEFAULT 'jogo',          -- prazo: cada jogo ou 1º jogo da rodada
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_groups_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -117,7 +148,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Rodada oficial de cada confronto do Brasileirão (TheSportsDB). Também criada pela sincronização.
+-- Rodada oficial de cada confronto das ligas com dados no TheSportsDB. Também criada pela sincronização.
 CREATE TABLE IF NOT EXISTS official_rounds (
     league_id INT UNSIGNED NOT NULL,
     season    SMALLINT UNSIGNED NOT NULL,
@@ -127,5 +158,6 @@ CREATE TABLE IF NOT EXISTS official_rounds (
     PRIMARY KEY (league_id, season, home_key, away_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Liga inicial
-INSERT IGNORE INTO leagues (name, code) VALUES ('Brasileirão Série A', 'BRA-A');
+-- Liga inicial (as demais o site cria sozinho a partir do catálogo, includes/leagues.php)
+INSERT IGNORE INTO leagues (name, code, external_id, country, kind, sort_order, short_name)
+VALUES ('Brasileirão Série A', 'BRA-A', 'bra.1', 'BRA', 'liga', 10, 'Série A');
