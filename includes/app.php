@@ -4,6 +4,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/layout.php';
 require_once __DIR__ . '/leagues.php';
 require_once __DIR__ . '/sync.php';
+require_once __DIR__ . '/rounds.php';
 
 date_default_timezone_set('America/Sao_Paulo');
 
