@@ -5,13 +5,6 @@
 
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
 
-/** Ligas sincronizadas. A chave é o código gravado na tabela leagues (BRA-A já existia no site). */
-const SYNC_LEAGUES = [
-    'BRA-A'        => ['slug' => 'bra.1', 'name' => 'Brasileirão Série A', 'cup' => false],
-    'BRA-CDB'      => ['slug' => 'bra.copa_do_brazil', 'name' => 'Copa do Brasil', 'cup' => true],
-    'CONMEBOL-LIB' => ['slug' => 'conmebol.libertadores', 'name' => 'Libertadores', 'cup' => true],
-];
-
 const SYNC_FULL_EVERY = 6 * 3600;  // tabela completa, para pegar jogos novos e remarcados
 const SYNC_IDLE_EVERY = 5 * 60;
 const SYNC_LIVE_EVERY = 60;
@@ -238,22 +231,26 @@ function sync_add_columns(string $table, array $wanted): void
     }
 }
 
-/** Garante que as ligas sincronizadas existem. Devolve código => id. */
+/**
+ * Ligas a sincronizar: as do catálogo (com slug da ESPN) que estão em algum bolão.
+ * Devolve código => linha de leagues (id, slug, cup e o controle de sincronização).
+ */
 function sync_leagues(): array
 {
-    $find = db()->prepare('SELECT id FROM leagues WHERE code = ?');
-    $insert = db()->prepare('INSERT INTO leagues (name, code, external_id) VALUES (?, ?, ?)');
-    $ids = [];
-    foreach (SYNC_LEAGUES as $code => $league) {
-        $find->execute([$code]);
-        $id = $find->fetchColumn();
-        if ($id === false) {
-            $insert->execute([$league['name'], $code, $league['slug']]);
-            $id = db()->lastInsertId();
-        }
-        $ids[$code] = (int) $id;
+    $rows = db()->query(
+        'SELECT l.* FROM leagues l
+         WHERE l.external_id IS NOT NULL AND l.external_id <> \'\'
+           AND EXISTS (SELECT 1 FROM group_leagues gl WHERE gl.league_id = l.id)
+         ORDER BY l.id'
+    )->fetchAll();
+    $out = [];
+    foreach ($rows as $row) {
+        $row['id'] = (int) $row['id'];
+        $row['slug'] = $row['external_id'];
+        $row['cup'] = ($row['kind'] ?? 'liga') === 'copa';
+        $out[$row['code']] = $row;
     }
-    return $ids;
+    return $out;
 }
 
 /**
@@ -274,12 +271,13 @@ function sync_run(string $mode): array
             ? ['last_full' => $now, 'last_quick' => $now]
             : ['last_quick' => $now]);
 
-        $leagueIds = sync_leagues();
+        $leagues = sync_leagues();
+        $leagueIds = array_map(fn ($l) => $l['id'], $leagues);
         $stats = ['mode' => $mode, 'events' => 0, 'new' => 0, 'results' => 0, 'failed_requests' => 0];
 
         // 1) Página padrão de cada liga: traz o calendário (dias ou fases) e os jogos do momento.
         $urls = [];
-        foreach (SYNC_LEAGUES as $code => $league) {
+        foreach ($leagues as $code => $league) {
             $urls[$code] = ESPN_BASE . $league['slug'] . '/scoreboard';
         }
         $boards = espn_fetch_many($urls);
@@ -287,7 +285,7 @@ function sync_run(string $mode): array
         // 2) Dias a buscar em cada liga.
         $pending = sync_pending_days($now);
         $dayUrls = [];
-        foreach (SYNC_LEAGUES as $code => $league) {
+        foreach ($leagues as $code => $league) {
             $days = [espn_day($now - 86400), espn_day($now), espn_day($now + 86400)];
             $days = array_merge($days, $pending[$leagueIds[$code]] ?? []);
 
@@ -330,7 +328,7 @@ function sync_run(string $mode): array
         }
         $stats['failed_requests'] += count(array_filter($boards, fn ($b) => $b === null));
 
-        foreach (SYNC_LEAGUES as $code => $league) {
+        foreach ($leagues as $code => $league) {
             $stages = $league['cup'] ? ($boards[$code]['leagues'][0]['calendar'][0]['entries'] ?? []) : [];
             $saved = sync_save_events($leagueIds[$code], array_values($events[$code] ?? []), $stages);
             $stats['events'] += $saved['events'];
