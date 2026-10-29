@@ -2278,3 +2278,19 @@ span.tile.is-live { color: #ff8a73; }
 @media (max-width: 420px) {
     .game-row { grid-template-columns: 22px minmax(0, 1fr) auto minmax(0, 1fr); padding: 6px 8px; gap: 6px; font-size: .9rem; }
 }
+
+/* ---------- Ranking: visões ---------- */
+.subtabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: var(--sp-3) 0; padding: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; width: fit-content; max-width: 100%; }
+.subtab { display: inline-flex; align-items: center; min-height: 40px; padding: 0 var(--sp-3); border-radius: 999px; color: var(--ink-soft); font-weight: 700; }
+.subtab:hover { color: var(--ink); text-decoration: none; background: var(--surface-3); }
+.subtab[aria-current="page"] { color: var(--on-accent); background: var(--accent); }
+.rank-round-nav { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); margin: var(--sp-2) 0; }
+.rank-round-title { margin: 0; flex: 0 1 auto; text-align: center; font-family: var(--font-display); font-size: 1.6rem; font-weight: 800; }
+.highlight { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-3) 0; }
+.highlight p { margin: 0; }
+.highlight-icon { display: inline-flex; padding: 8px; border-radius: 50%; color: var(--warning-text, var(--accent-text)); background: var(--warning-soft, var(--accent-soft)); }
+.matrix-wrap { overflow-x: auto; }
+.matrix th, .matrix td { white-space: nowrap; text-align: center; }
+.matrix .col-who { position: sticky; left: 0; z-index: 1; text-align: left; background: var(--surface); }
+.matrix tr.is-me .col-who { background: var(--accent-soft); }
+.matrix .col-round a { color: inherit; }

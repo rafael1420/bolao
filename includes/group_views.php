@@ -577,7 +577,24 @@ function render_ranking(array $c): void
 
     <p class="meta">Atualizado a cada resultado lançado. Desempate: placares exatos, depois acertos de vencedor ou empate. Quem empata em tudo divide a mesma posição.</p>
 
-    <?php render_ranking_selector($c); ?>
+    <?php
+    $gid = $c['groupId'];
+    $views = ['geral' => 'Geral', 'rodada' => 'Rodada', 'matriz' => 'Rodada a rodada'];
+    ?>
+    <nav class="subtabs" aria-label="Visões do ranking">
+        <?php foreach ($views as $key => $label): ?>
+            <a class="subtab" href="<?= tab_href($gid, 'ranking', '&amp;vista=' . $key) ?>"<?= $c['vista'] === $key ? ' aria-current="page"' : '' ?>><?= e($label) ?></a>
+        <?php endforeach; ?>
+    </nav>
+
+    <?php if ($c['vista'] === 'matriz') { render_ranking_matrix($c); return; } ?>
+    <?php if ($c['vista'] === 'rodada') {
+        if (!$c['rankRound']) {
+            echo '<section class="panel empty-state"><p>Ainda não há rodada com jogo encerrado.</p></section>';
+            return;
+        }
+        render_ranking_round_nav($c);
+    } ?>
 
     <?php
     // Pódio: os três primeiros da lista mostrada (geral ou rodada), só quando já há pontos.
@@ -981,7 +998,108 @@ function render_others_predictions(array $rows, int $myId, bool $finished): void
     <?php
 }
 
-/** Seletor "Geral / Rodada N" da aba Ranking. Funciona sem JavaScript (formulário GET). */
+/**
+ * Visão "Rodada" do ranking: setas entre as rodadas com jogo encerrado, o seletor (funciona sem
+ * JavaScript) e o destaque da rodada (quem fez mais pontos).
+ */
+function render_ranking_round_nav(array $c): void
+{
+    $gid = $c['groupId'];
+    $list = $c['scoredRounds']; // da mais recente para a mais antiga
+    $keys = array_column($list, 'key');
+    $idx = array_search($c['rankRound']['key'], $keys, true);
+    $older = $list[$idx + 1] ?? null;
+    $newer = $idx > 0 ? $list[$idx - 1] : null;
+    ?>
+    <div class="rank-round-nav">
+        <?php if ($older): ?>
+            <a class="round-step" href="<?= tab_href($gid, 'ranking', '&amp;vista=rodada&amp;rodada=' . e($older['key'])) ?>" aria-label="Anterior: <?= e($older['label']) ?>"><?= icon('chevron-l') ?></a>
+        <?php else: ?>
+            <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-l') ?></span>
+        <?php endif; ?>
+        <h3 class="rank-round-title"><?= e($c['rankRound']['label']) ?></h3>
+        <?php if ($newer): ?>
+            <a class="round-step" href="<?= tab_href($gid, 'ranking', '&amp;vista=rodada&amp;rodada=' . e($newer['key'])) ?>" aria-label="Próxima: <?= e($newer['label']) ?>"><?= icon('chevron-r') ?></a>
+        <?php else: ?>
+            <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-r') ?></span>
+        <?php endif; ?>
+    </div>
+    <?php render_ranking_selector($c); ?>
+    <?php
+    $top = $c['roundRanking'][0] ?? null;
+    if ($top && (int) $top['total'] > 0):
+        $tied = array_filter($c['roundRanking'], fn ($r) => (int) $r['pos'] === 1);
+    ?>
+        <section class="panel highlight" aria-label="Destaque da rodada">
+            <span class="highlight-icon"><?= icon('star') ?></span>
+            <p><strong>Destaque da rodada:</strong>
+                <?= e(implode(', ', array_column($tied, 'name'))) ?>, com <?= e(plural((int) $top['total'], 'ponto', 'pontos')) ?>
+                <?= (int) $top['exact'] > 0 ? ' e ' . e(plural((int) $top['exact'], 'placar exato', 'placares exatos')) : '' ?>.</p>
+        </section>
+    <?php endif;
+}
+
+/**
+ * Visão "Rodada a rodada": participante × últimas 8 rodadas com jogo encerrado. O total é o mesmo do
+ * ranking geral. Primeira coluna fixa e rolagem lateral no celular.
+ */
+function render_ranking_matrix(array $c): void
+{
+    $cols = array_reverse(array_slice($c['scoredRounds'], 0, 8)); // da mais antiga para a mais recente
+    if (!$cols) {
+        echo '<section class="panel empty-state"><p>Ainda não há rodada com jogo encerrado.</p></section>';
+        return;
+    }
+    ?>
+    <div class="table-wrap matrix-wrap">
+        <table class="ranking matrix">
+            <caption class="visually-hidden">Pontos de cada participante nas últimas rodadas</caption>
+            <thead>
+                <tr>
+                    <th scope="col" class="col-who">Participante</th>
+                    <?php foreach ($cols as $col): ?>
+                        <th scope="col" class="col-round"><a href="<?= tab_href($c['groupId'], 'ranking', '&amp;vista=rodada&amp;rodada=' . e($col['key'])) ?>" title="<?= e($col['label']) ?>"><?= e(matrix_head($col, $c['leagues'])) ?></a></th>
+                    <?php endforeach; ?>
+                    <th scope="col" class="col-pts">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($c['ranking'] as $row):
+                    $isMe = (int) $row['id'] === (int) $c['user']['id'];
+                    $pts = $c['matrix'][(int) $row['id']] ?? [];
+                    $best = [];
+                ?>
+                    <tr class="<?= $isMe ? 'is-me' : '' ?>">
+                        <th scope="row" class="col-who"><span class="who"><?= (int) $row['pos'] ?>º <?= e($row['name']) ?><?= $isMe ? ' <span class="you">você</span>' : '' ?></span></th>
+                        <?php foreach ($cols as $col): ?>
+                            <td class="col-round"><?= isset($pts[$col['key']]) ? (int) $pts[$col['key']] : '–' ?></td>
+                        <?php endforeach; ?>
+                        <td class="col-pts"><?= (int) $row['total'] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <p class="help">Últimas <?= count($cols) ?> rodadas com jogo encerrado. Total: todos os jogos encerrados do bolão.</p>
+    <?php
+}
+
+/** Cabeçalho curto de uma coluna da matriz: "R9", "OIT ida"; com várias ligas, o nome curto antes. */
+function matrix_head(array $col, array $leagues): string
+{
+    $label = $col['round_name'];
+    $text = preg_match('/^Rodada (\d+)$/', $label, $m) ? 'R' . $m[1] : round_chip_text($label);
+    if (count($leagues) > 1) {
+        foreach ($leagues as $l) {
+            if ((int) $l['id'] === (int) $col['league_id']) {
+                return mb_substr(($l['short_name'] ?? '') ?: $l['name'], 0, 10) . ' ' . $text;
+            }
+        }
+    }
+    return $text;
+}
+
+/** Seletor de rodada da visão "Rodada" do ranking. Funciona sem JavaScript (formulário GET). */
 function render_ranking_selector(array $c): void
 {
     if (!$c['scoredRounds']) {
@@ -992,18 +1110,18 @@ function render_ranking_selector(array $c): void
     <form method="get" action="group.php" class="ranking-filter">
         <input type="hidden" name="id" value="<?= (int) $gid ?>">
         <input type="hidden" name="tab" value="ranking">
+        <input type="hidden" name="vista" value="rodada">
         <div class="field">
             <label for="f-rank-rodada">Ver ranking</label>
             <div class="control">
                 <select id="f-rank-rodada" name="rodada" data-autosubmit>
-                    <option value=""<?= $c['rankRound'] === null ? ' selected' : '' ?>>Geral</option>
                     <?php foreach ($c['scoredRounds'] as $r): ?>
                         <option value="<?= e($r['key']) ?>"<?= $c['rankRound'] && $c['rankRound']['key'] === $r['key'] ? ' selected' : '' ?>><?= e($r['label']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
         </div>
-        <div class="actions"><button type="submit" class="btn ghost small">Ver</button></div>
+        <div class="actions"><button type="submit" class="btn ghost small" data-autosubmit-fallback>Ver</button></div>
     </form>
     <?php if ($c['rankRound']): ?>
         <p class="meta">Pontos só dos jogos encerrados de <?= e($c['rankRound']['label']) ?>.</p>

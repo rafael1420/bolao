@@ -491,7 +491,30 @@ function group_scored_rounds(int $groupId): array
             'league_id' => (int) $row['league_id'],
             'round' => (int) $row['round'],
             'label' => $multi ? $row['league_name'] . ' · ' . $label : $label,
+            'round_name' => $label,
         ];
+    }
+    return $out;
+}
+
+/**
+ * Pontos de cada participante em cada rodada (jogos encerrados das ligas atuais do bolão), numa consulta.
+ * Devolve [user_id => ["liga-rodada" => pontos]]. Base da visão "Rodada a rodada" do ranking.
+ */
+function group_points_by_round(int $groupId): array
+{
+    $stmt = db()->prepare(
+        'SELECT p.user_id, m.league_id, m.round, COALESCE(SUM(p.points), 0) AS pts
+         FROM predictions p
+         JOIN matches m ON m.id = p.match_id
+         JOIN group_leagues gl ON gl.group_id = p.group_id AND gl.league_id = m.league_id
+         WHERE p.group_id = ? AND m.home_score IS NOT NULL AND ' . not_void_sql('m') . '
+         GROUP BY p.user_id, m.league_id, m.round'
+    );
+    $stmt->execute([$groupId]);
+    $out = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $out[(int) $row['user_id']][(int) $row['league_id'] . '-' . (int) $row['round']] = (int) $row['pts'];
     }
     return $out;
 }

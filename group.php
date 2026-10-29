@@ -120,18 +120,29 @@ if ($me) {
     }
 }
 
-// Ranking de uma rodada (aba Ranking, seletor "Geral / Rodada N"). Valor: "liga-rodada".
+// Aba Ranking: Geral, Rodada (uma rodada, com setas) ou Rodada a rodada (matriz das últimas 8).
 $scoredRounds = $tab === 'ranking' ? group_scored_rounds($groupId) : [];
 $rankKey = (string) ($_GET['rodada'] ?? '');
+$vista = (string) ($_GET['vista'] ?? ($rankKey !== '' ? 'rodada' : 'geral'));
+if (!in_array($vista, ['geral', 'rodada', 'matriz'], true)) {
+    $vista = 'geral';
+}
 $rankRound = null;
 foreach ($scoredRounds as $sr) {
     if ($sr['key'] === $rankKey) {
         $rankRound = $sr;
     }
 }
+if ($vista === 'rodada' && $rankRound === null) {
+    $rankRound = $scoredRounds[0] ?? null; // a mais recente
+}
+if ($vista !== 'rodada') {
+    $rankRound = null;
+}
 $roundRanking = $rankRound
     ? ranking_with_positions(group_ranking($groupId, $rankRound['round'], $rankRound['league_id']))
     : [];
+$matrix = ($tab === 'ranking' && $vista === 'matriz') ? group_points_by_round($groupId) : [];
 
 // Palpites de todos nos jogos já fechados desta rodada (nunca dos que ainda não começaram)
 $others = $tab === 'rodada' ? closed_match_predictions($groupId, array_merge($matches, $rescheduled)) : [];
@@ -187,6 +198,8 @@ $ctx = [
     'scoredRounds' => $scoredRounds,   // rodadas com jogo encerrado: key, league_id, round, label
     'rankRound' => $rankRound,         // null = ranking geral; senão a linha de scoredRounds escolhida
     'roundRanking' => $roundRanking,   // ranking só da rodada escolhida
+    'vista' => $vista,                 // geral, rodada ou matriz
+    'matrix' => $matrix,               // [user_id => ["liga-rodada" => pontos]] (Rodada a rodada)
     'others' => $others,               // [match_id => palpites de todos], só jogos fechados
 ];
 
