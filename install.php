@@ -140,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if ($done): ?>
         <p>Instalação concluída. A conexão foi confirmada e o arquivo de configuração foi gravado.</p>
         <p>Agora abra o site, crie a conta com o e-mail <strong><?= h($values['admin_email']) ?></strong> e você terá acesso à administração.</p>
-        <p><a href="index.php">Ir para o site</a></p>
+        <p><a href="./">Ir para o site</a></p>
         <?php if (file_exists(__FILE__)): ?>
             <div class="alert"><p>Não consegui apagar o install.php. Apague esse arquivo pelo gerenciador de arquivos.</p></div>
         <?php endif; ?>

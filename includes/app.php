@@ -13,6 +13,16 @@ const PT_DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 // Erro inesperado (banco fora do ar, bug): registra no log e mostra uma página amigável.
 set_exception_handler(function ($ex) {
     error_log('[bolao] ' . $ex);
+    if (defined('BOLAO_API')) {
+        // API (api/index.php): erro em JSON, que o app React mostra como aviso.
+        if (!headers_sent()) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        $msg = (defined('DEBUG') && DEBUG) ? (string) $ex : 'Não foi possível concluir agora. Tente de novo em instantes.';
+        echo json_encode(['error' => $msg], JSON_UNESCAPED_UNICODE);
+        return;
+    }
     if (defined('DEBUG') && DEBUG) {
         if (!headers_sent()) {
             http_response_code(500);
@@ -692,7 +702,7 @@ function create_password_reset(int $userId, string $createdBy = 'user'): string
 
 function password_reset_url(string $token): string
 {
-    return site_url() . 'reset_password.php?token=' . $token;
+    return site_url() . 'nova-senha?token=' . $token;
 }
 
 /** Este IP ainda pode pedir links? No máximo 10 por hora. */

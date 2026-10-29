@@ -1,6 +1,40 @@
 # Conferência Bolão
 
-Site de bolão de futebol em PHP e MySQL, para hospedagem compartilhada (Hostinger, plano PHP/HTML).
+Site de bolão de futebol: app em **React** (Vite + TypeScript + Tailwind) com API em **PHP e MySQL**, para hospedagem compartilhada (Hostinger, plano PHP/HTML). O servidor só precisa de PHP; o React vai já compilado no zip.
+
+## Versão 2 (React)
+
+- Palpites salvos sozinhos enquanto você digita (sem botão de salvar), com +/− e teclado (setas, Enter pula para o próximo placar).
+- Contagem regressiva dos prazos, placar ao vivo que se atualiza sozinho (a cada 30 s com jogo rolando).
+- Palpites da galera com a divisão mandante/empate/visitante; pódio, ranking por rodada e mapa de calor "rodada a rodada".
+- Tema claro e escuro, barra inferior no celular, telas carregadas sob demanda (o celular baixa só o que usa).
+- Mesmas regras e mesmo banco: `includes/` continua com rodadas, pontuação, ranking e sincronização com a ESPN. A API fica em `api/index.php` (rotas `?r=...`, CSRF por cabeçalho).
+- Links antigos (`join_group.php?code=`, `group.php?id=`, `reset_password.php?token=`) são redirecionados pelo `.htaccess`.
+
+### Gerar o zip (no seu computador, precisa de Node 20+)
+
+```
+./build-release.sh
+```
+
+Gera `release/bolao-site.zip` (React compilado + API + includes + .htaccess, sem o `config.php`) e `release/schema.sql`.
+
+### Atualizar um site que já usa a versão PHP
+
+1. Faça backup de `includes/config.php` (pelo Gerenciador de Arquivos).
+2. Apague os arquivos antigos do `public_html` (menos `includes/config.php`).
+3. Envie `bolao-site.zip` para o `public_html` e extraia. Mantenha o seu `includes/config.php`.
+4. Apague o `install.php` (o site já está instalado).
+5. O banco não muda: não precisa importar nada.
+
+Em instalação nova, siga os passos abaixo (o `install.php` cria o `config.php`).
+
+### Desenvolver
+
+```
+php -S 127.0.0.1:8080        # API (com includes/config.php apontando para um MySQL local)
+cd web && npm install && npm run dev   # app em http://localhost:5173 (encaminha /api para o PHP)
+```
 
 Qualquer usuário cadastrado pode criar um bolão, escolher até 6 campeonatos (mais de 50, do Brasil e do mundo, agrupados por país), as regras de pontuação e de rodada, e convidar pessoas por código, link ou senha. Os palpites seguem a rodada da vez. Não há apostas em dinheiro nem prêmios.
 
@@ -28,7 +62,7 @@ Em instalação nova, o `schema.sql` já traz tudo. As migrações (abaixo) são
 1. No **Gerenciador de Arquivos** do site `bolao.rafaelgomes.site`, entre em `public_html`.
 2. Apague qualquer arquivo padrão (como `index.html` ou `default.php`).
 3. Envie o `bolao-site.zip`, clique com o botão direito e escolha **Extrair** dentro de `public_html`.
-4. Os arquivos devem ficar direto dentro de `public_html`, sem subpasta.
+4. Os arquivos devem ficar direto dentro de `public_html`, sem subpasta (inclusive o `.htaccess`, que é oculto: no Gerenciador de Arquivos, ative "Mostrar arquivos ocultos" para conferir).
 
 ### 5. Instalar
 1. Abra `bolao.rafaelgomes.site/install.php`.
@@ -86,10 +120,12 @@ As duas são opcionais. Sem `SITE_URL`, o link do e-mail usa o endereço pelo qu
 ## Estrutura
 
 ```
-index.php, login.php, ...  Páginas do site
+web/                       Código do app React (src/pages, src/components)
+api/index.php              API JSON usada pelo app
+includes/                  Regras, conexão, sessão e sincronização (bloqueado pela internet)
+assets/                    Ícones e manifesto do app
 install.php                Instalador (se apaga após usar)
-includes/                  Regras, conexão e sessão (bloqueado pela internet)
-assets/                    CSS
+build-release.sh           Gera o zip para a Hostinger
 ```
 
 ## Uso

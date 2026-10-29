@@ -1,3 +1,6 @@
 includes/config.php
 .DS_Store
 .claude/settings.local.json
+dist/
+release/
+web/node_modules/
