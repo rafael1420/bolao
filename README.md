@@ -2,7 +2,7 @@
 
 Site de bolão de futebol em PHP e MySQL, para hospedagem compartilhada (Hostinger, plano PHP/HTML).
 
-Qualquer usuário cadastrado pode criar um bolão, escolher as ligas e as regras de pontuação, e convidar pessoas por código, link ou senha. Não há apostas em dinheiro nem prêmios.
+Qualquer usuário cadastrado pode criar um bolão, escolher até 6 campeonatos (mais de 50, do Brasil e do mundo, agrupados por país), as regras de pontuação e de rodada, e convidar pessoas por código, link ou senha. Os palpites seguem a rodada da vez. Não há apostas em dinheiro nem prêmios.
 
 ## Instalação na Hostinger (bolao.rafaelgomes.site)
 
@@ -53,6 +53,18 @@ As migrações só criam o que falta (tabelas com `CREATE TABLE IF NOT EXISTS` e
 | `001_password_resets_login_attempts.sql` | Cria `password_resets` (links de "Esqueci minha senha") e `login_attempts` (limite de tentativas de login) |
 | `002_ligas_times_rodadas.sql` | Cria `teams` (escudos e cores dos times); acrescenta país, tipo e controle de sincronização em `leagues`, os times em `matches` e o modo de rodada em `bolao_groups` |
 
+### Atualizar para a versão "Conferência Bolão" (migração 002)
+
+1. Importe `sql/migrations/002_ligas_times_rodadas.sql` no phpMyAdmin (pode importar de novo sem problema).
+2. Envie os arquivos novos do site.
+3. No **Gerenciador de Arquivos**, edite `includes/config.php` e troque o nome do site:
+   `define('SITE_NAME', 'Conferência Bolão');`
+4. Entre como administrador, abra **Administração → Jogos** e clique em **Sincronizar agora**.
+
+Se os arquivos forem enviados antes da migração, o site cria sozinho as colunas que faltam na primeira página aberta (precisa da permissão ALTER no banco, que a Hostinger dá). Mesmo assim, importe a migração antes.
+
+Quem instalou o site como app no celular continua vendo o ícone antigo até remover e adicionar de novo.
+
 ### Configurações novas no `includes/config.php`
 
 Sites instalados antes desta versão podem acrescentar ao `includes/config.php` (pelo Gerenciador de Arquivos):
@@ -88,7 +100,7 @@ assets/                    CSS
 - **Importar jogos** (aba da administração): cole várias linhas `rodada; data e hora; mandante; visitante` (ou copie de uma planilha), confira linha a linha e grave tudo de uma vez. Jogos repetidos são ignorados.
 - **Usuários** (aba da administração): busca contas e gera um link de nova senha (vale 24 h, uso único) para mandar por WhatsApp quando o e-mail não chegar.
 - **Organizador do bolão** também pode **transferir a organização** para outro participante (em *Configurar*). Ele continua no bolão como participante.
-- **Participantes:** fazem palpites até o início de cada jogo, acompanham o ranking (geral ou de uma rodada) e podem sair do bolão. Depois que um jogo começa, cada um pode ver os palpites da galera naquele jogo. Antes disso, ninguém vê o palpite dos outros.
+- **Participantes:** fazem palpites na rodada aberta (aba **Rodada**), veem o calendário de todos os campeonatos do bolão (aba **Jogos**), acompanham o ranking (geral, de uma rodada ou rodada a rodada) e podem sair do bolão. Depois que um jogo começa, cada um pode ver os palpites da galera naquele jogo. Antes disso, ninguém vê o palpite dos outros.
 - **Esqueci minha senha** (na tela de entrada): envia por e-mail um link que vale 1 hora e funciona uma vez. A resposta é a mesma exista ou não a conta.
 
 ## Segurança
@@ -115,12 +127,33 @@ Cada bolão pode alterar esses valores (de 0 a 20).
 
 Quem empata nos três divide a posição. Só contam jogos encerrados das ligas atuais do bolão.
 
+## Rodadas
+
+Cada bolão escolhe em **Configurar → Rodadas** quais rodadas aceitam palpite (regras em `includes/rounds.php`, testadas por `php tests/rounds_test.php`):
+
+| Modo | Como funciona |
+|---|---|
+| Rodada atual (padrão) | Só a rodada da vez. A próxima abre quando todos os jogos da atual começarem, ou 48 h antes do primeiro jogo dela. As seguintes ficam bloqueadas. |
+| Atual e próxima | A rodada da vez e a seguinte. |
+| Livre | Como era antes: qualquer jogo até começar. |
+
+E o prazo: **até cada jogo** (padrão) ou **até o 1º jogo da rodada**. Rodadas passadas ficam só para consulta. Jogo adiado para semanas depois (ou antecipado) abre na semana em que vai ser disputado e aparece em "Jogos remarcados". O servidor (`predict.php`) confere as mesmas regras; palpites já feitos em rodadas futuras continuam guardados.
+
+A rodada atual é a que começa primeiro entre as que ainda não acabaram. Uma rodada acaba quando todos os jogos do núcleo (a até 4 dias da data do meio da rodada) têm placar ou começaram há mais de 3 dias.
+
+## Campeonatos
+
+O catálogo fica em `includes/leagues.php` (`LEAGUE_CATALOG`, agrupado por país em `COUNTRIES`). O site grava as ligas novas no banco sozinho quando o catálogo muda. Na administração, aba **Ligas**, dá para desativar uma liga (ela some do seletor; bolões que já a têm continuam com ela).
+
 ## Jogos automáticos (ESPN)
 
-`includes/sync.php` busca jogos e placares do Brasileirão Série A (`BRA-A`), da Copa do Brasil (`BRA-CDB`) e da Libertadores (`CONMEBOL-LIB`) na API pública da ESPN, e as rodadas do Brasileirão no TheSportsDB. Não precisa de chave nem de cron:
+`includes/sync.php` busca jogos, placares, times (nome, sigla, escudo e cores) e o escudo de cada liga na API pública da ESPN, e as rodadas oficiais das principais ligas no TheSportsDB. Não precisa de chave nem de cron:
 
-- Roda depois que a página é entregue ao visitante: a cada 5 minutos, ou a cada minuto com jogo ao vivo; a tabela completa, a cada 6 horas.
-- Cria as ligas que faltam e, na primeira vez, as colunas e tabelas de que precisa (`sync_state`, `official_rounds` e as colunas novas de `matches`). Instalações novas já recebem tudo pelo `schema.sql`.
+- Só sincroniza as ligas que estão em algum bolão, cada uma no seu ritmo: os jogos do momento a cada 5 minutos (1 minuto com jogo ao vivo); a tabela de 7 dias atrás a 35 à frente, a cada 6 horas (no máximo 2 ligas por vez); e, para uma liga nova, os jogos desde o começo da temporada, aos poucos.
+- No máximo 60 consultas à ESPN por vez. Liga que falha espera 2, 4, 8... até 60 minutos antes de tentar de novo.
+- Roda depois que a página é entregue ao visitante. Se o servidor não consegue liberar a página antes, só a parte rápida roda sozinha; a tabela completa fica para o botão **Sincronizar agora**.
+- Os escudos vêm do próprio CDN da ESPN, já reduzidos. Se não carregarem, aparece um escudo desenhado com as cores do time.
+- Na primeira vez, cria as colunas e tabelas de que precisa (as mesmas das migrações 001 e 002). Instalações novas já recebem tudo pelo `schema.sql`.
 - Jogos adiados ou cancelados (`status = 'void'`) ficam fora dos palpites, dos pendentes e do ranking.
-- Na aba **Jogos** da administração aparecem a última atualização, o último erro e o botão **Sincronizar agora**.
+- Na aba **Jogos** da administração aparecem a última atualização, a situação de cada liga, o último erro e o botão **Sincronizar agora**.
 - Precisa da extensão `curl` do PHP (vem ligada na Hostinger).

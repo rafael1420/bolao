@@ -2314,3 +2314,6 @@ span.tile.is-live { color: #f6b3b3; }
 .matrix .col-who { position: sticky; left: 0; z-index: 1; text-align: left; background: var(--surface); }
 .matrix tr.is-me .col-who { background: var(--accent-soft); }
 .matrix .col-round a { color: inherit; }
+
+.sync-table th, .sync-table td { white-space: nowrap; }
+.inline-form { margin: 0; }

@@ -250,9 +250,9 @@ function auth_pitch(): void
         <p class="auth-title">O bolão da <em>sua turma</em>, rodada a rodada.</p>
         <p class="lead">Palpite nos jogos, acompanhe o ranking e tire onda com os amigos. Sem dinheiro, só resenha.</p>
         <ul class="auth-features">
-            <li><?= icon('clock') ?><span><strong>Palpite até o apito inicial</strong>Dá para mudar o placar até cada jogo começar.</span></li>
+            <li><?= icon('clock') ?><span><strong>Uma rodada de cada vez</strong>Palpite na rodada da vez e mude o placar até o jogo começar.</span></li>
             <li><?= icon('trophy') ?><span><strong>Ranking automático</strong>Placar exato, vencedor e saldo de gols viram pontos sozinhos.</span></li>
-            <li><?= icon('users') ?><span><strong>Só com quem você chamar</strong>Convite por link ou código, com senha se quiser.</span></li>
+            <li><?= icon('users') ?><span><strong>Só com quem você chamar</strong>Convite por link ou código, com senha se quiser. Mais de 50 campeonatos do Brasil e do mundo.</span></li>
         </ul>
         <div class="auth-demo" aria-hidden="true">
             <span class="demo-team"><?= team_crest('Galera Futebol Clube') ?>Galera</span>

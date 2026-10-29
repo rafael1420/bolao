@@ -43,7 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('alert', 'Já existe uma sincronização em andamento. Tente de novo em um minuto.');
             } else {
                 flash_set('notice', sprintf(
-                    'Sincronizado: %d jogos lidos, %d novos, %d resultados atualizados.%s',
+                    'Sincronizado: %d ligas, %d consultas, %d jogos lidos, %d novos, %d resultados atualizados.%s',
+                    $result['leagues'],
+                    $result['requests'],
                     $result['events'],
                     $result['new'],
                     $result['results'],
@@ -55,6 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('alert', 'A sincronização falhou: ' . mb_substr($ex->getMessage(), 0, 200));
         }
         redirect(admin_url(['tab' => 'jogos']));
+    }
+
+    if ($action === 'toggle_league') {
+        // Liga desativada some do seletor de ligas; bolões que já a têm continuam com ela.
+        $leagueId = (int) ($_POST['league_id'] ?? 0);
+        $active = (int) ($_POST['active'] ?? 0) === 1 ? 1 : 0;
+        db()->prepare('UPDATE leagues SET is_active = ? WHERE id = ?')->execute([$active, $leagueId]);
+        flash_set('notice', $active ? 'Liga ativada.' : 'Liga desativada. Ela não aparece mais para novos bolões.');
+        redirect(admin_url(['tab' => 'ligas'], '#liga-' . $leagueId));
     }
 
     if ($action === 'add_league') {
@@ -207,7 +218,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$leagues = db()->query('SELECT id, name, code FROM leagues ORDER BY name')->fetchAll();
+$leagues = db()->query('SELECT id, name, code, country, kind, is_active, external_id FROM leagues ORDER BY sort_order, name')->fetchAll();
+usort($leagues, fn ($a, $b) => (COUNTRIES[$a['country']][1] ?? 999) <=> (COUNTRIES[$b['country']][1] ?? 999));
 
 page_start('Administração', $user, 'wrap', 'admin');
 ?>
@@ -347,7 +359,10 @@ page_start('Administração', $user, 'wrap', 'admin');
     ?>
     <section class="panel stack sync-panel" aria-labelledby="sec-sync">
         <h2 class="section-title" id="sec-sync">Jogos automáticos</h2>
-        <p class="help">Jogos e placares do Brasileirão, da Copa do Brasil e da Libertadores vêm da ESPN e se atualizam sozinhos (a cada 5 minutos, ou a cada minuto com jogo ao vivo).</p>
+        <p class="help">Jogos e placares das ligas que estão em algum bolão vêm da ESPN e se atualizam sozinhos: os jogos do momento a cada 5 minutos (a cada minuto com jogo ao vivo) e a tabela de cada liga a cada 6 horas. Uma liga recém-escolhida recebe aos poucos os jogos desde o começo da temporada. As rodadas oficiais das principais ligas vêm do TheSportsDB; nas demais, são estimadas pelas datas.</p>
+        <?php if (!function_exists('litespeed_finish_request') && !function_exists('fastcgi_finish_request')): ?>
+            <p class="help">Este servidor não libera a página antes de sincronizar, então só a parte rápida roda sozinha. Use o botão abaixo para a tabela completa.</p>
+        <?php endif; ?>
         <p class="meta">
             <?php if (!empty($syncState['last_quick'])): ?>
                 Última atualização: <?= e(date('d/m', (int) $syncState['last_quick']) . ' às ' . kick_clock((int) $syncState['last_quick'])) ?>.
@@ -360,6 +375,37 @@ page_start('Administração', $user, 'wrap', 'admin');
         </p>
         <?php if (!empty($syncState['last_error'])): ?>
             <?php alert_box(['Último erro: ' . $syncState['last_error']]); ?>
+        <?php endif; ?>
+        <?php
+        $synced = db()->query(
+            'SELECT l.id, l.name, l.synced_quick_at, l.synced_full_at, l.sync_failures, l.backfill_day,
+                    (SELECT COUNT(*) FROM matches m WHERE m.league_id = l.id) AS games
+             FROM leagues l
+             WHERE EXISTS (SELECT 1 FROM group_leagues gl WHERE gl.league_id = l.id)
+             ORDER BY l.sort_order, l.name'
+        )->fetchAll();
+        $when = fn (int $ts) => $ts ? date('d/m', $ts) . ' ' . kick_clock($ts) : 'nunca';
+        ?>
+        <?php if ($synced): ?>
+            <div class="table-wrap">
+                <table class="ranking sync-table">
+                    <caption class="visually-hidden">Sincronização por liga</caption>
+                    <thead><tr><th scope="col">Liga</th><th scope="col">Jogos</th><th scope="col">Rápida</th><th scope="col">Completa</th><th scope="col">Falhas</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($synced as $l): ?>
+                            <tr>
+                                <th scope="row"><?= e($l['name']) ?></th>
+                                <td><?= (int) $l['games'] ?></td>
+                                <td><?= e($when((int) $l['synced_quick_at'])) ?></td>
+                                <td><?= e($when((int) $l['synced_full_at'])) ?></td>
+                                <td><?= (int) $l['sync_failures'] ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php else: ?>
+            <p class="meta">Nenhuma liga em uso ainda. A sincronização começa quando um bolão escolher uma liga.</p>
         <?php endif; ?>
         <form method="post" action="admin_matches.php?tab=jogos" class="actions">
             <?= csrf_field() ?>
@@ -592,9 +638,16 @@ page_start('Administração', $user, 'wrap', 'admin');
         <?php else: ?>
             <ul class="list">
                 <?php foreach ($leagues as $league): ?>
-                    <li class="list-row">
-                        <span class="list-teams"><?= e($league['name']) ?></span>
-                        <span class="list-meta">Código <?= e($league['code']) ?></span>
+                    <li class="list-row" id="liga-<?= (int) $league['id'] ?>">
+                        <span class="list-teams"><?= country_flag_svg((string) $league['country']) ?> <?= e($league['name']) ?><?= (int) $league['is_active'] ? '' : ' <span class="tag is-off">desativada</span>' ?></span>
+                        <span class="list-meta"><?= e(country_name((string) $league['country'])) ?> · <?= $league['kind'] === 'copa' ? 'Copa' : 'Liga' ?> · Código <?= e($league['code']) ?><?= $league['external_id'] ? ' · ESPN ' . e($league['external_id']) : ' · sem sincronização' ?></span>
+                        <form method="post" action="admin_matches.php?tab=ligas" class="inline-form">
+                            <?= csrf_field() ?>
+                            <input type="hidden" name="action" value="toggle_league">
+                            <input type="hidden" name="league_id" value="<?= (int) $league['id'] ?>">
+                            <input type="hidden" name="active" value="<?= (int) $league['is_active'] ? 0 : 1 ?>">
+                            <button type="submit" class="btn ghost small"><?= (int) $league['is_active'] ? 'Desativar' : 'Ativar' ?></button>
+                        </form>
                     </li>
                 <?php endforeach; ?>
             </ul>
