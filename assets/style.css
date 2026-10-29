@@ -1296,6 +1296,42 @@ details.confirm > .disclosure-body { border-color: var(--danger-line); backgroun
 .round-head .meta { margin: 0; flex: 1 1 100%; }
 .round-head time { font-weight: 700; color: var(--ink); }
 
+/* Cabeçalho da rodada (aba Rodada) */
+.round-banner {
+    display: grid;
+    gap: var(--sp-3);
+    margin: 0 0 var(--sp-3);
+    padding: var(--sp-4);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md, 14px);
+    box-shadow: var(--shadow-1);
+    scroll-margin-top: calc(var(--topbar-h) + 12px);
+}
+.round-banner.is-aberta { border-color: var(--accent-line); }
+.round-banner-top { display: flex; align-items: center; gap: var(--sp-2); }
+.round-banner-title { flex: 1 1 auto; min-width: 0; text-align: center; }
+.round-banner-title .eyebrow { margin: 0 0 4px; }
+.round-banner .round-title { font-size: clamp(1.9rem, 6vw, 2.6rem); overflow-wrap: anywhere; }
+.round-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 0; text-align: center; color: var(--ink-soft); font-weight: 600; }
+.round-status time { font-weight: 700; color: var(--ink); }
+.round-status .icon { width: 18px; height: 18px; }
+.round-banner.is-bloqueada .round-status { color: var(--ink-faint); }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.round-progress { display: grid; gap: 6px; max-width: 420px; width: 100%; margin: 0 auto; }
+.round-progress .meta { margin: 0; text-align: center; }
+.round-banner .round-jump { justify-content: center; }
+.chip .icon { width: 14px; height: 14px; margin-right: 2px; }
+.chip.is-locked { color: var(--ink-faint); background: var(--surface-2); border-style: dashed; }
+.chip.is-wait { color: var(--ink-soft); }
+.chip.is-now:not([aria-current="page"]) { border-color: var(--accent-line); }
+.match.is-locked { opacity: .92; }
+.match.is-locked .board { filter: saturate(.75); }
+.resched-title { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-5, 28px); }
+.season-over p { display: flex; align-items: center; gap: var(--sp-2); }
+.league-tab { gap: 6px; }
+.league-tab .league-logo { width: 20px; height: 20px; object-fit: contain; }
+
 /* ---------- Jogos: o cartão é um placar ---------- */
 .matches { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); }
 .match {
@@ -2213,3 +2249,32 @@ span.tile.is-live { color: #ff8a73; }
 
 .sync-panel { margin-bottom: var(--sp-5); }
 .sync-panel .meta { margin: 0; }
+
+/* ---------- Aba Jogos: calendário por dia ---------- */
+.day-block { margin-bottom: var(--sp-4); }
+.day-title { margin: 0 0 var(--sp-2); font-size: .95rem; font-weight: 700; color: var(--ink-soft); text-transform: none; }
+.day-title.is-today { color: var(--accent-text); }
+.game-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.game-row {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: 52px;
+    padding: 6px 12px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+}
+.game-row:hover { text-decoration: none; border-color: var(--line-strong); background: var(--surface-2); }
+.game-row.is-live { border-color: var(--danger-line); }
+.game-team { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-weight: 600; }
+.game-team.is-home { justify-content: flex-end; text-align: right; }
+.game-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-score { display: grid; justify-items: center; gap: 2px; min-width: 64px; font-variant-numeric: tabular-nums; }
+.game-score time { font-weight: 700; color: var(--ink-soft); }
+.game-row .crest-sm { width: 22px; height: 26px; }
+@media (max-width: 420px) {
+    .game-row { grid-template-columns: 22px minmax(0, 1fr) auto minmax(0, 1fr); padding: 6px 8px; gap: 6px; font-size: .9rem; }
+}

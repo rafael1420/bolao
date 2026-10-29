@@ -72,7 +72,7 @@ function group_header(array $c): void
 
     <nav class="tabs" aria-label="Seções do bolão">
         <?php
-        $tabIcons = ['palpites' => 'calendar', 'ranking' => 'trophy', 'participantes' => 'users', 'configurar' => 'gear', 'regras' => 'list'];
+        $tabIcons = ['rodada' => 'ticket', 'jogos' => 'calendar', 'ranking' => 'trophy', 'participantes' => 'users', 'configurar' => 'gear', 'regras' => 'list'];
         foreach ($c['tabs'] as $key => $label): ?>
             <a class="tab" href="<?= tab_href($gid, $key) ?>"<?= $c['tab'] === $key ? ' aria-current="page"' : '' ?>><?= icon($tabIcons[$key] ?? 'list') ?><?= e($label) ?></a>
         <?php endforeach; ?>
@@ -80,47 +80,42 @@ function group_header(array $c): void
     <?php
 }
 
-/** Texto do chip de rodada, com o estado para leitor de tela. */
+/** Estado do chip de rodada (classe e texto para leitor de tela), a partir de round_ui_state(). */
 function round_state(array $stat): array
 {
-    if ($stat['finished'] === $stat['total']) {
-        return ['done', 'encerrada'];
+    switch ($stat['state'] ?? '') {
+        case 'encerrada':
+            return ['done', 'encerrada'];
+        case 'bloqueada':
+            return ['locked', 'ainda fechada'];
+        case 'aguardando':
+            return ['wait', 'aguardando resultados'];
     }
     if ($stat['pending'] > 0) {
         return ['pending', 'faltam ' . plural($stat['pending'], 'palpite', 'palpites')];
     }
-    if ($stat['open'] > 0) {
-        return ['ready', 'palpites em dia'];
-    }
-    return ['wait', 'aguardando resultados'];
+    return ['ready', 'palpites em dia'];
 }
 
-/** Aba Palpites: rodada, faixa de rodadas, jogos e barra de salvar. */
+/** Aba Rodada: campeonato, cabeçalho da rodada, faixa de rodadas, jogos e barra de salvar. */
 function render_palpites(array $c): void
 {
     $gid = $c['groupId'];
     $round = $c['round'];
     $now = $c['now'];
+    $rctx = $c['rctx'];
     $matches = $c['matches'];
+    $all = array_merge($matches, $c['rescheduled']);
     $mine = $c['mine'];
     $pf = $c['predictFlash'];
     $user = $c['user'];
-
-    $openMatches = array_values(array_filter($matches, 'is_open'));
-    $openCount = count($openMatches);
-    $filled = 0;
-    foreach ($openMatches as $m) {
-        if (isset($mine[(int) $m['id']])) {
-            $filled++;
-        }
-    }
-    $firstOpen = $openCount ? strtotime($openMatches[0]['kickoff_at']) : null;
-
-    $idx = array_search($round, $c['rounds'], true);
-    $prevRound = ($idx !== false && $idx > 0) ? $c['rounds'][$idx - 1] : null;
-    $nextRound = ($idx !== false && $idx < count($c['rounds']) - 1) ? $c['rounds'][$idx + 1] : null;
     $labels = $c['roundLabels'];
     $lq = $c['leagueQs'];
+
+    $openCount = 0;
+    foreach ($all as $m) {
+        $openCount += can_predict($m, $rctx) ? 1 : 0;
+    }
 
     if ($c['welcome']) {
         ?>
@@ -138,56 +133,31 @@ function render_palpites(array $c): void
 
     <?php render_league_tabs($c); ?>
 
+    <?php if ($rctx['over']): ?>
+        <div class="notice season-over" role="status"><p><?= icon('whistle') ?>Temporada encerrada. Os resultados ficam aqui para consulta.</p></div>
+    <?php endif; ?>
+
+    <?php render_round_banner($c); ?>
+
     <?php if ($c['rounds']): ?>
     <nav class="rounds" aria-label="Rodadas">
-        <?php if ($prevRound): ?>
-            <a class="round-step" href="<?= tab_href($gid, 'palpites', $lq . '&amp;round=' . $prevRound) ?>" aria-label="Anterior: <?= e($labels[$prevRound]) ?>"><?= icon('chevron-l') ?></a>
-        <?php else: ?>
-            <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-l') ?></span>
-        <?php endif; ?>
-
         <ol class="round-strip" data-current-scroll>
             <?php foreach ($c['rounds'] as $r):
-                $stat = $c['roundStats'][$r];
-                [$state, $stateText] = round_state($stat);
+                [$state, $stateText] = round_state($c['roundStats'][$r]);
                 $isCurrent = $r === $round;
+                $short = $r >= 20 && $c['rctx']['rounds'][$r]['label'] !== 'Rodada ' . $r ? round_chip_text($labels[$r]) : (string) $r;
             ?>
                 <li>
-                    <a class="chip is-<?= e($state) ?>" href="<?= tab_href($gid, 'palpites', $lq . '&amp;round=' . $r) ?>" title="<?= e($labels[$r]) ?>"<?= $isCurrent ? ' aria-current="page" data-current' : '' ?>>
-                        <span class="chip-num"><?= (int) $r ?></span>
+                    <a class="chip is-<?= e($state) ?><?= $r === $rctx['current'] ? ' is-now' : '' ?>" href="<?= tab_href($gid, 'rodada', $lq . '&amp;round=' . $r) ?>" title="<?= e($labels[$r]) ?>"<?= $isCurrent ? ' aria-current="page" data-current' : '' ?>>
+                        <?php if ($state === 'locked'): ?><?= icon('lock') ?><?php endif; ?>
+                        <span class="chip-num"><?= e($short) ?></span>
                         <span class="visually-hidden">, <?= e($labels[$r]) ?>, <?= e($stateText) ?></span>
                     </a>
                 </li>
             <?php endforeach; ?>
         </ol>
-
-        <?php if ($nextRound): ?>
-            <a class="round-step" href="<?= tab_href($gid, 'palpites', $lq . '&amp;round=' . $nextRound) ?>" aria-label="Próxima: <?= e($labels[$nextRound]) ?>"><?= icon('chevron-r') ?></a>
-        <?php else: ?>
-            <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-r') ?></span>
-        <?php endif; ?>
     </nav>
     <?php endif; ?>
-
-    <section class="round-head" id="rodada">
-        <h2 class="round-title"><?= e($labels[$round] ?? ('Rodada ' . (int) $round)) ?></h2>
-        <?php render_round_jump($c); ?>
-        <?php if (!$matches): ?>
-            <p class="meta"><?= is_admin($user)
-                ? 'Esta rodada ainda não tem jogos cadastrados. Cadastre-os no menu Administração.'
-                : 'A tabela desta rodada ainda não saiu. Tente outra rodada.' ?></p>
-        <?php elseif ($openCount): ?>
-            <p class="meta">
-                <?= e(plural($openCount, 'jogo aberto', 'jogos abertos')) ?>.
-                Primeiro fechamento:
-                <time data-kickoff data-first datetime="<?= e(date('c', $firstOpen)) ?>"><?= e(kickoff_phrase($firstOpen, $now, true)) ?></time>
-            </p>
-        <?php else: ?>
-            <p class="meta">Rodada encerrada para palpites.
-                <a href="<?= tab_href($gid, 'ranking') ?>">Ver o ranking</a>
-            </p>
-        <?php endif; ?>
-    </section>
 
     <?php if ($pf): ?>
         <?php if ($pf['skipped']): ?>
@@ -206,13 +176,15 @@ function render_palpites(array $c): void
             </div>
         <?php elseif ($pf['saved'] > 0): ?>
             <div class="notice" role="status">
-                <p>Palpites salvos às <?= e($pf['time']) ?>. Dá para mudar até cada jogo começar.</p>
+                <p>Palpites salvos às <?= e($pf['time']) ?>. <?= e(deadline_hint($rctx)) ?></p>
             </div>
         <?php endif; ?>
     <?php endif; ?>
 
     <?php if (!$matches): ?>
-        <section class="panel empty-state"><p>Nenhum jogo nesta rodada.</p></section>
+        <section class="panel empty-state"><p><?= is_admin($user)
+            ? 'Esta rodada ainda não tem jogos cadastrados. A sincronização traz os jogos sozinha; também dá para cadastrar no menu Administração.'
+            : 'A tabela desta rodada ainda não saiu. Tente outra rodada.' ?></p></section>
         <?php return; ?>
     <?php endif; ?>
 
@@ -223,183 +195,27 @@ function render_palpites(array $c): void
         <input type="hidden" name="round" value="<?= (int) $round ?>">
 
         <ol class="matches">
-        <?php foreach ($matches as $m):
-            $id = (int) $m['id'];
-            $pred = $mine[$id] ?? null;
-            $open = is_open($m);
-            $finished = $m['home_score'] !== null;
-            $kick = strtotime($m['kickoff_at']);
-            $keep = ($pf && isset($pf['keep'][$id])) ? $pf['keep'][$id] : null;
-            $skipReason = null;
-            if ($pf) {
-                foreach ($pf['skipped'] as $s) {
-                    if ((int) $s['id'] === $id) {
-                        $skipReason = $s['reason'];
-                    }
-                }
-            }
-            $homeVal = $keep ? $keep['home'] : ($pred ? (string) (int) $pred['home_pred'] : '');
-            $awayVal = $keep ? $keep['away'] : ($pred ? (string) (int) $pred['away_pred'] : '');
-            $pts = $pred ? (int) ($pred['points'] ?? 0) : 0;
-            $reason = ($pred && $finished)
-                ? points_reason((int) $pred['home_pred'], (int) $pred['away_pred'], (int) $m['home_score'], (int) $m['away_score'])
-                : '';
-        ?>
-            <?php
-            // Estado do cartão: aberto (falta ou salvo), fechando em breve, fechado, encerrado (exato, acerto ou erro)
-            $soon = $open && ($kick - $now) < 3600;
-            $exact = $finished && $pred
-                && (int) $pred['home_pred'] === (int) $m['home_score'] && (int) $pred['away_pred'] === (int) $m['away_score'];
-            $live = !$open && is_live($m);
-            $cardClass = $open ? 'is-open' : 'is-closed';
-            if ($live) {
-                $cardClass .= ' is-live';
-            }
-            if ($open) {
-                $cardClass .= ($pred && !$skipReason) ? ' is-saved' : ' is-missing';
-            }
-            if ($soon) {
-                $cardClass .= ' is-soon';
-            }
-            if ($finished) {
-                $cardClass .= ' is-finished' . ($pred ? ($exact ? ' is-exact' : ($pts > 0 ? ' is-hit' : ' is-miss')) : ' is-miss');
-            }
-            $when = $open ? kick_day_clock($kick, $now) : date('d/m', $kick) . ', ' . kick_clock($kick);
-            ?>
-            <li class="match <?= $cardClass ?>" id="jogo-<?= $id ?>"
-                data-kick="<?= $kick ?>" data-open="<?= $open ? '1' : '0' ?>">
-                <div class="match-top">
-                    <span class="league"><?= e($m['league_name']) ?> · <?= e($when) ?><?= !empty($m['note']) ? ' · ' . e($m['note']) : '' ?></span>
-                    <?php if ($open): ?>
-                        <?php if ($skipReason): ?>
-                            <span class="badge is-warn"><?= icon('alert') ?>Não salvo</span>
-                        <?php elseif ($pred): ?>
-                            <span class="badge is-saved"><?= icon('check') ?>Palpite salvo</span>
-                        <?php else: ?>
-                            <span class="badge is-missing"><?= icon('alert') ?>Falta palpitar</span>
-                        <?php endif; ?>
-                    <?php elseif ($finished): ?>
-                        <span class="badge is-final"><?= icon('whistle') ?>Encerrado</span>
-                    <?php elseif ($live): ?>
-                        <span class="badge is-live"><span class="live-dot" aria-hidden="true"></span>Ao vivo<?= !empty($m['status_detail']) ? ' · ' . e($m['status_detail']) : '' ?></span>
-                    <?php else: ?>
-                        <span class="badge is-muted"><?= icon('lock') ?><?= $pred ? 'Fechado' : 'Sem palpite' ?></span>
-                    <?php endif; ?>
-                </div>
-
-                <div class="board">
-                    <div class="side">
-                        <?= team_badge($m, 'home') ?>
-                        <?php if ($open): ?>
-                            <label class="team" for="h-<?= $id ?>"><?= e($m['home_team']) ?></label>
-                        <?php else: ?>
-                            <span class="team"><?= e($m['home_team']) ?></span>
-                        <?php endif; ?>
-                    </div>
-
-                    <?php if ($open): ?>
-                        <div class="score" role="group" aria-label="Seu palpite para <?= e($m['home_team']) ?> × <?= e($m['away_team']) ?>">
-                            <div class="tile-set">
-                                <button type="button" class="step" data-step="1" data-target="h-<?= $id ?>" hidden aria-label="Aumentar o placar de <?= e($m['home_team']) ?>"><?= icon('plus') ?></button>
-                                <input id="h-<?= $id ?>" class="tile" type="number" inputmode="numeric" min="0" max="30" step="1"
-                                       enterkeyhint="next" autocomplete="off" placeholder="–"
-                                       name="preds[<?= $id ?>][home]" value="<?= e($homeVal) ?>">
-                                <button type="button" class="step" data-step="-1" data-target="h-<?= $id ?>" hidden aria-label="Diminuir o placar de <?= e($m['home_team']) ?>"><?= icon('minus') ?></button>
-                            </div>
-                            <span class="colon" aria-hidden="true">:</span>
-                            <div class="tile-set">
-                                <button type="button" class="step" data-step="1" data-target="a-<?= $id ?>" hidden aria-label="Aumentar o placar de <?= e($m['away_team']) ?>"><?= icon('plus') ?></button>
-                                <input id="a-<?= $id ?>" class="tile" type="number" inputmode="numeric" min="0" max="30" step="1"
-                                       enterkeyhint="next" autocomplete="off" placeholder="–"
-                                       name="preds[<?= $id ?>][away]" value="<?= e($awayVal) ?>">
-                                <button type="button" class="step" data-step="-1" data-target="a-<?= $id ?>" hidden aria-label="Diminuir o placar de <?= e($m['away_team']) ?>"><?= icon('minus') ?></button>
-                            </div>
-                        </div>
-                    <?php elseif ($finished): ?>
-                        <div class="score">
-                            <span class="visually-hidden">Placar final: <?= (int) $m['home_score'] ?> a <?= (int) $m['away_score'] ?>.</span>
-                            <span class="tile is-official" aria-hidden="true"><?= (int) $m['home_score'] ?></span>
-                            <span class="colon" aria-hidden="true">:</span>
-                            <span class="tile is-official" aria-hidden="true"><?= (int) $m['away_score'] ?></span>
-                        </div>
-                    <?php elseif ($live): ?>
-                        <div class="score">
-                            <span class="visually-hidden">Placar parcial: <?= (int) $m['live_home_score'] ?> a <?= (int) $m['live_away_score'] ?>.</span>
-                            <span class="tile is-live" aria-hidden="true"><?= (int) $m['live_home_score'] ?></span>
-                            <span class="colon" aria-hidden="true">:</span>
-                            <span class="tile is-live" aria-hidden="true"><?= (int) $m['live_away_score'] ?></span>
-                        </div>
-                    <?php elseif ($pred): ?>
-                        <div class="score">
-                            <span class="visually-hidden">Seu palpite: <?= (int) $pred['home_pred'] ?> a <?= (int) $pred['away_pred'] ?>.</span>
-                            <span class="tile is-locked" aria-hidden="true"><?= (int) $pred['home_pred'] ?></span>
-                            <span class="colon" aria-hidden="true">:</span>
-                            <span class="tile is-locked" aria-hidden="true"><?= (int) $pred['away_pred'] ?></span>
-                        </div>
-                    <?php else: ?>
-                        <div class="score">
-                            <span class="visually-hidden">Sem palpite.</span>
-                            <span class="tile is-empty" aria-hidden="true">–</span>
-                            <span class="colon" aria-hidden="true">:</span>
-                            <span class="tile is-empty" aria-hidden="true">–</span>
-                        </div>
-                    <?php endif; ?>
-
-                    <div class="side">
-                        <?= team_badge($m, 'away') ?>
-                        <?php if ($open): ?>
-                            <label class="team" for="a-<?= $id ?>"><?= e($m['away_team']) ?></label>
-                        <?php else: ?>
-                            <span class="team"><?= e($m['away_team']) ?></span>
-                        <?php endif; ?>
-                    </div>
-                </div>
-
-                <div class="match-foot">
-                    <?php if ($open): ?>
-                        <p class="status">
-                            <?= icon('clock') ?>
-                            <?php if ($skipReason): ?>
-                                <span class="status-text is-warn"><?= e('Não salvo: ' . $skipReason) ?></span>
-                            <?php else: ?>
-                                <time data-kickoff datetime="<?= e(date('c', $kick)) ?>" class="countdown"><?= e(kickoff_phrase($kick, $now)) ?></time>
-                            <?php endif; ?>
-                        </p>
-                    <?php elseif ($finished): ?>
-                        <p class="status">
-                            <?php if ($pred): ?>
-                                <span class="your-pick">Seu palpite <span class="pick-score"><?= (int) $pred['home_pred'] ?> × <?= (int) $pred['away_pred'] ?></span></span>
-                            <?php else: ?>
-                                <span class="your-pick">Você não palpitou</span>
-                            <?php endif; ?>
-                        </p>
-                        <p class="points-badge<?= $pts > 0 ? ' is-scored' : '' ?><?= $exact ? ' is-exact' : '' ?>">
-                            <strong><?= $pts > 0 ? '+' : '' ?><?= $pts ?></strong>
-                            <span class="reason"><?= $pts === 1 ? 'ponto' : 'pontos' ?> · <?= e($pred ? $reason : 'Sem palpite') ?></span>
-                        </p>
-                    <?php elseif ($live): ?>
-                        <p class="status">
-                            <?php if ($pred): ?>
-                                <span class="your-pick">Seu palpite <span class="pick-score"><?= (int) $pred['home_pred'] ?> × <?= (int) $pred['away_pred'] ?></span></span>
-                            <?php else: ?>
-                                <span class="your-pick">Você não palpitou</span>
-                            <?php endif; ?>
-                        </p>
-                    <?php else: ?>
-                        <p class="status">
-                            <?= icon('lock') ?>
-                            <span>Fechou às <?= e(kick_clock($kick)) ?></span>
-                            <span class="status-text">· <?= $pred ? 'Aguardando o resultado' : 'Você não palpitou' ?></span>
-                        </p>
-                    <?php endif; ?>
-                </div>
-                <?php if (isset($c['others'][$id])) { render_others_predictions($c['others'][$id], (int) $user['id'], $finished); } ?>
-            </li>
-        <?php endforeach; ?>
+            <?php foreach ($matches as $m) { render_match_card($m, $c); } ?>
         </ol>
 
+        <?php if ($c['rescheduled']): ?>
+            <h3 class="section-title resched-title" id="remarcados"><?= icon('calendar') ?>Jogos remarcados</h3>
+            <p class="meta">Jogos de outras rodadas que vão ser disputados nesta semana.</p>
+            <ol class="matches">
+                <?php foreach ($c['rescheduled'] as $m) { render_match_card($m, $c); } ?>
+            </ol>
+        <?php endif; ?>
+
         <?php if ($openCount): ?>
-            <?php $justSaved = $pf && !$pf['skipped'] && $pf['saved'] > 0; ?>
+            <?php
+            $filled = 0;
+            foreach ($all as $m) {
+                if (can_predict($m, $rctx) && isset($mine[(int) $m['id']])) {
+                    $filled++;
+                }
+            }
+            $justSaved = $pf && !$pf['skipped'] && $pf['saved'] > 0;
+            ?>
             <div class="save-bar" data-save-bar>
                 <div class="progress<?= $filled === $openCount ? ' is-full' : '' ?>" aria-hidden="true"><span class="progress-fill" data-progress style="width: <?= (int) round($filled * 100 / $openCount) ?>%"></span></div>
                 <p class="save-count">
@@ -407,14 +223,331 @@ function render_palpites(array $c): void
                     <span class="badge is-dirty" data-dirty hidden>Não salvo</span>
                 </p>
                 <p class="save-status<?= $justSaved ? ' is-saved' : '' ?>" aria-live="polite" data-save-status>
-                    <?= $pf && !$pf['skipped'] && $pf['saved'] > 0
-                        ? e('Palpites salvos às ' . $pf['time'] . '. Dá para mudar até cada jogo começar.')
-                        : 'Dá para mudar até cada jogo começar.' ?>
+                    <?= $justSaved
+                        ? e('Palpites salvos às ' . $pf['time'] . '. ' . deadline_hint($rctx))
+                        : e(deadline_hint($rctx)) ?>
                 </p>
                 <button type="submit" class="btn primary" data-busy="Salvando…">Salvar palpites</button>
             </div>
         <?php endif; ?>
     </form>
+    <?php
+}
+
+/** "Dá para mudar até cada jogo começar" ou, com prazo por rodada, até o 1º jogo da rodada. */
+function deadline_hint(array $rctx): string
+{
+    return $rctx['deadline'] === 'rodada'
+        ? 'Dá para mudar até o primeiro jogo da rodada.'
+        : 'Dá para mudar até cada jogo começar.';
+}
+
+/** Texto curto do chip nas copas: "Oitavas de final · ida" vira "OIT ida". */
+function round_chip_text(string $label): string
+{
+    $map = ['Fase de liga' => 'FL', 'Fase de grupos' => 'G', 'Playoffs' => 'PO', '16 avos de final' => '16', 'Oitavas de final' => 'OIT',
+        'Quartas de final' => 'QF', 'Semifinal' => 'SF', 'Final' => 'F', 'Fase preliminar' => 'PR'];
+    $parts = explode(' · ', $label);
+    $head = $map[$parts[0]] ?? (preg_match('/^(\d+)ª fase/u', $parts[0], $x) ? $x[1] . 'ª' : mb_substr($parts[0], 0, 3));
+    $tail = $parts[1] ?? '';
+    if (preg_match('/^Rodada (\d+)$/', $tail, $x)) {
+        $tail = $x[1];
+    }
+    return trim($head . ' ' . $tail);
+}
+
+/**
+ * Cabeçalho da rodada: setas, nome, situação e quantos palpites faltam.
+ * Situações: aberta (com o próximo prazo), aguardando resultados, encerrada (meus pontos e posição),
+ * bloqueada (quando abre).
+ */
+function render_round_banner(array $c): void
+{
+    $rctx = $c['rctx'];
+    $round = $c['round'];
+    $gid = $c['groupId'];
+    $now = $c['now'];
+    $lq = $c['leagueQs'];
+    $labels = $c['roundLabels'];
+    $stat = $c['roundStats'][$round] ?? null;
+    $numbers = $c['rounds'];
+    $idx = array_search($round, $numbers, true);
+    $prev = ($idx !== false && $idx > 0) ? $numbers[$idx - 1] : null;
+    $next = ($idx !== false && $idx < count($numbers) - 1) ? $numbers[$idx + 1] : null;
+    $byId = [];
+    foreach (array_merge($c['matches'], $c['rescheduled']) as $m) {
+        $byId[(int) $m['id']] = $m;
+    }
+    $state = $stat['state'] ?? 'bloqueada';
+    $deadline = round_next_deadline($rctx, $round, $byId);
+    // Remarcados abertos também contam para o próximo prazo.
+    foreach ($c['rescheduled'] as $m) {
+        if (can_predict($m, $rctx)) {
+            $t = strtotime($m['kickoff_at']);
+            $deadline = $deadline === null ? $t : min($deadline, $t);
+            $state = $state === 'encerrada' ? $state : 'aberta';
+        }
+    }
+    ?>
+    <section class="round-banner is-<?= e($state) ?>" id="rodada" aria-labelledby="round-title">
+        <div class="round-banner-top">
+            <?php if ($prev !== null): ?>
+                <a class="round-step" href="<?= tab_href($gid, 'rodada', $lq . '&amp;round=' . $prev) ?>" aria-label="Anterior: <?= e($labels[$prev]) ?>"><?= icon('chevron-l') ?></a>
+            <?php else: ?>
+                <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-l') ?></span>
+            <?php endif; ?>
+            <div class="round-banner-title">
+                <p class="eyebrow"><?= e($c['leagueName']) ?><?= $round === $rctx['current'] && !$rctx['over'] ? ' · rodada atual' : '' ?></p>
+                <h2 class="round-title" id="round-title"><?= e($labels[$round] ?? ('Rodada ' . (int) $round)) ?></h2>
+            </div>
+            <?php if ($next !== null): ?>
+                <a class="round-step" href="<?= tab_href($gid, 'rodada', $lq . '&amp;round=' . $next) ?>" aria-label="Próxima: <?= e($labels[$next]) ?>"><?= icon('chevron-r') ?></a>
+            <?php else: ?>
+                <span class="round-step is-off" aria-hidden="true"><?= icon('chevron-r') ?></span>
+            <?php endif; ?>
+        </div>
+
+        <?php if ($stat): ?>
+        <p class="round-status">
+            <?php if ($state === 'aberta' && $deadline !== null): ?>
+                <span class="status-dot" aria-hidden="true"></span>
+                Palpites abertos · <?= $rctx['deadline'] === 'rodada' ? 'fecham' : 'próximo fechamento' ?>
+                <time data-kickoff data-first datetime="<?= e(date('c', $deadline)) ?>"><?= e(kickoff_phrase($deadline, $now, true)) ?></time>
+            <?php elseif ($state === 'aguardando'): ?>
+                <?= icon('clock') ?>Palpites fechados · aguardando resultados
+            <?php elseif ($state === 'encerrada'): ?>
+                <?= icon('whistle') ?>Encerrada<?php if ($c['roundMe'] && (int) $c['roundMe']['played'] > 0): ?> · você fez <?= e(plural((int) $c['roundMe']['total'], 'ponto', 'pontos')) ?> · <?= (int) $c['roundMe']['pos'] ?>º na rodada<?php elseif ($c['roundMe']): ?> · você não palpitou nesta rodada<?php endif; ?>
+                · <a href="<?= tab_href($gid, 'ranking', '&amp;vista=rodada&amp;rodada=' . (int) $c['leagueId'] . '-' . (int) $round) ?>">ver ranking da rodada</a>
+            <?php else: ?>
+                <?= icon('lock') ?><?= e(round_locked_text($rctx, $round, $now)) ?>
+            <?php endif; ?>
+        </p>
+        <?php if ($stat['open'] > 0):
+            $done = $stat['open'] - $stat['pending'];
+        ?>
+            <div class="round-progress">
+                <div class="progress<?= $done === $stat['open'] ? ' is-full' : '' ?>" aria-hidden="true"><span class="progress-fill" style="width: <?= (int) round($done * 100 / $stat['open']) ?>%"></span></div>
+                <p class="meta"><strong><?= (int) $done ?></strong> de <?= (int) $stat['open'] ?> palpites feitos</p>
+            </div>
+        <?php endif; ?>
+        <?php endif; ?>
+        <?php render_round_jump($c); ?>
+    </section>
+    <?php
+}
+
+/** "Abre em qui, 19h" ou "Abre depois da Rodada 12". */
+function round_locked_text(array $rctx, int $round, int $now): string
+{
+    [$at, $after] = round_opens_at($rctx, $round, $rctx['mode']);
+    if ($at !== null && $at > $now) {
+        return 'Abre em ' . kick_day_clock($at, $now);
+    }
+    if ($after !== null && isset($rctx['rounds'][$after])) {
+        return 'Abre depois da ' . $rctx['rounds'][$after]['label'];
+    }
+    return 'Ainda fechada para palpites';
+}
+
+/**
+ * Cartão de um jogo. Estados: aberto (falta ou salvo, fechando em breve), bloqueado (a rodada ainda
+ * não abriu ou o prazo da rodada passou), fechado (já começou), ao vivo e encerrado (exato, acerto ou erro).
+ */
+function render_match_card(array $m, array $c): void
+{
+    $rctx = $c['rctx'];
+    $now = $c['now'];
+    $mine = $c['mine'];
+    $pf = $c['predictFlash'];
+    $user = $c['user'];
+
+    $id = (int) $m['id'];
+    $pred = $mine[$id] ?? null;
+    $status = predict_status($m, $rctx);
+    $open = $status['ok'];
+    $locked = in_array($status['reason'], ['locked', 'deadline'], true);
+    $finished = $m['home_score'] !== null;
+    $kick = strtotime($m['kickoff_at']);
+    // Com prazo por rodada, o cartão fecha no primeiro jogo da rodada.
+    $close = $kick;
+    [$number, $resched] = $rctx['where'][$id] ?? [(int) $m['round'], false];
+    if ($open && !$resched && $rctx['deadline'] === 'rodada' && !empty($rctx['rounds'][$number]['start'])) {
+        $close = min($kick, (int) $rctx['rounds'][$number]['start']);
+    }
+    $keep = ($pf && isset($pf['keep'][$id])) ? $pf['keep'][$id] : null;
+    $skipReason = null;
+    if ($pf) {
+        foreach ($pf['skipped'] as $s) {
+            if ((int) $s['id'] === $id) {
+                $skipReason = $s['reason'];
+            }
+        }
+    }
+    $homeVal = $keep ? $keep['home'] : ($pred ? (string) (int) $pred['home_pred'] : '');
+    $awayVal = $keep ? $keep['away'] : ($pred ? (string) (int) $pred['away_pred'] : '');
+    $pts = $pred ? (int) ($pred['points'] ?? 0) : 0;
+    $reason = ($pred && $finished)
+        ? points_reason((int) $pred['home_pred'], (int) $pred['away_pred'], (int) $m['home_score'], (int) $m['away_score'])
+        : '';
+
+    $soon = $open && ($close - $now) < 3600;
+    $exact = $finished && $pred
+        && (int) $pred['home_pred'] === (int) $m['home_score'] && (int) $pred['away_pred'] === (int) $m['away_score'];
+    $live = !$open && is_live($m);
+    $cardClass = $open ? 'is-open' : 'is-closed';
+    if ($locked) {
+        $cardClass .= ' is-locked';
+    }
+    if ($live) {
+        $cardClass .= ' is-live';
+    }
+    if ($open) {
+        $cardClass .= ($pred && !$skipReason) ? ' is-saved' : ' is-missing';
+    }
+    if ($soon) {
+        $cardClass .= ' is-soon';
+    }
+    if ($finished) {
+        $cardClass .= ' is-finished' . ($pred ? ($exact ? ' is-exact' : ($pts > 0 ? ' is-hit' : ' is-miss')) : ' is-miss');
+    }
+    $when = ($open || $locked) ? kick_day_clock($kick, $now) : date('d/m', $kick) . ', ' . kick_clock($kick);
+    $origin = $m['origin_label'] ?? '';
+    $lockText = $status['reason'] === 'deadline' ? 'Prazo da rodada encerrado' : round_locked_text($rctx, $number, $now);
+    if ($status['reason'] === 'locked' && $resched) {
+        $lockText = 'Abre na semana do jogo';
+    }
+    ?>
+    <li class="match <?= $cardClass ?>" id="jogo-<?= $id ?>"
+        data-kick="<?= $close ?>" data-open="<?= $open ? '1' : '0' ?>">
+        <div class="match-top">
+            <span class="league"><?= e($when) ?><?= !empty($m['note']) ? ' · ' . e($m['note']) : '' ?><?= $origin !== '' ? ' · da ' . e($origin) : '' ?></span>
+            <?php if ($open): ?>
+                <?php if ($skipReason): ?>
+                    <span class="badge is-warn"><?= icon('alert') ?>Não salvo</span>
+                <?php elseif ($pred): ?>
+                    <span class="badge is-saved"><?= icon('check') ?>Palpite salvo</span>
+                <?php else: ?>
+                    <span class="badge is-missing"><?= icon('alert') ?>Falta palpitar</span>
+                <?php endif; ?>
+            <?php elseif ($finished): ?>
+                <span class="badge is-final"><?= icon('whistle') ?>Encerrado</span>
+            <?php elseif ($live): ?>
+                <span class="badge is-live"><span class="live-dot" aria-hidden="true"></span>Ao vivo<?= !empty($m['status_detail']) ? ' · ' . e($m['status_detail']) : '' ?></span>
+            <?php elseif ($locked): ?>
+                <span class="badge is-muted"><?= icon('lock') ?><?= $status['reason'] === 'deadline' ? 'Prazo encerrado' : 'Bloqueado' ?></span>
+            <?php else: ?>
+                <span class="badge is-muted"><?= icon('lock') ?><?= $pred ? 'Fechado' : 'Sem palpite' ?></span>
+            <?php endif; ?>
+        </div>
+
+        <div class="board">
+            <div class="side">
+                <?= team_badge($m, 'home') ?>
+                <?php if ($open): ?>
+                    <label class="team" for="h-<?= $id ?>"><?= e($m['home_team']) ?></label>
+                <?php else: ?>
+                    <span class="team"><?= e($m['home_team']) ?></span>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($open): ?>
+                <div class="score" role="group" aria-label="Seu palpite para <?= e($m['home_team']) ?> × <?= e($m['away_team']) ?>">
+                    <div class="tile-set">
+                        <button type="button" class="step" data-step="1" data-target="h-<?= $id ?>" hidden aria-label="Aumentar o placar de <?= e($m['home_team']) ?>"><?= icon('plus') ?></button>
+                        <input id="h-<?= $id ?>" class="tile" type="number" inputmode="numeric" min="0" max="30" step="1"
+                               enterkeyhint="next" autocomplete="off" placeholder="–"
+                               name="preds[<?= $id ?>][home]" value="<?= e($homeVal) ?>">
+                        <button type="button" class="step" data-step="-1" data-target="h-<?= $id ?>" hidden aria-label="Diminuir o placar de <?= e($m['home_team']) ?>"><?= icon('minus') ?></button>
+                    </div>
+                    <span class="colon" aria-hidden="true">:</span>
+                    <div class="tile-set">
+                        <button type="button" class="step" data-step="1" data-target="a-<?= $id ?>" hidden aria-label="Aumentar o placar de <?= e($m['away_team']) ?>"><?= icon('plus') ?></button>
+                        <input id="a-<?= $id ?>" class="tile" type="number" inputmode="numeric" min="0" max="30" step="1"
+                               enterkeyhint="next" autocomplete="off" placeholder="–"
+                               name="preds[<?= $id ?>][away]" value="<?= e($awayVal) ?>">
+                        <button type="button" class="step" data-step="-1" data-target="a-<?= $id ?>" hidden aria-label="Diminuir o placar de <?= e($m['away_team']) ?>"><?= icon('minus') ?></button>
+                    </div>
+                </div>
+            <?php elseif ($finished): ?>
+                <div class="score">
+                    <span class="visually-hidden">Placar final: <?= (int) $m['home_score'] ?> a <?= (int) $m['away_score'] ?>.</span>
+                    <span class="tile is-official" aria-hidden="true"><?= (int) $m['home_score'] ?></span>
+                    <span class="colon" aria-hidden="true">:</span>
+                    <span class="tile is-official" aria-hidden="true"><?= (int) $m['away_score'] ?></span>
+                </div>
+            <?php elseif ($live): ?>
+                <div class="score">
+                    <span class="visually-hidden">Placar parcial: <?= (int) $m['live_home_score'] ?> a <?= (int) $m['live_away_score'] ?>.</span>
+                    <span class="tile is-live" aria-hidden="true"><?= (int) $m['live_home_score'] ?></span>
+                    <span class="colon" aria-hidden="true">:</span>
+                    <span class="tile is-live" aria-hidden="true"><?= (int) $m['live_away_score'] ?></span>
+                </div>
+            <?php elseif ($pred): ?>
+                <div class="score">
+                    <span class="visually-hidden">Seu palpite: <?= (int) $pred['home_pred'] ?> a <?= (int) $pred['away_pred'] ?>.</span>
+                    <span class="tile is-locked" aria-hidden="true"><?= (int) $pred['home_pred'] ?></span>
+                    <span class="colon" aria-hidden="true">:</span>
+                    <span class="tile is-locked" aria-hidden="true"><?= (int) $pred['away_pred'] ?></span>
+                </div>
+            <?php else: ?>
+                <div class="score">
+                    <span class="visually-hidden">Sem palpite.</span>
+                    <span class="tile is-empty" aria-hidden="true">–</span>
+                    <span class="colon" aria-hidden="true">:</span>
+                    <span class="tile is-empty" aria-hidden="true">–</span>
+                </div>
+            <?php endif; ?>
+
+            <div class="side">
+                <?= team_badge($m, 'away') ?>
+                <?php if ($open): ?>
+                    <label class="team" for="a-<?= $id ?>"><?= e($m['away_team']) ?></label>
+                <?php else: ?>
+                    <span class="team"><?= e($m['away_team']) ?></span>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="match-foot">
+            <?php if ($open): ?>
+                <p class="status">
+                    <?= icon('clock') ?>
+                    <?php if ($skipReason): ?>
+                        <span class="status-text is-warn"><?= e('Não salvo: ' . $skipReason) ?></span>
+                    <?php else: ?>
+                        <time data-kickoff datetime="<?= e(date('c', $close)) ?>" class="countdown"><?= e(kickoff_phrase($close, $now)) ?></time>
+                    <?php endif; ?>
+                </p>
+            <?php elseif ($finished || $live): ?>
+                <p class="status">
+                    <?php if ($pred): ?>
+                        <span class="your-pick">Seu palpite <span class="pick-score"><?= (int) $pred['home_pred'] ?> × <?= (int) $pred['away_pred'] ?></span></span>
+                    <?php else: ?>
+                        <span class="your-pick">Você não palpitou</span>
+                    <?php endif; ?>
+                </p>
+                <?php if ($finished): ?>
+                    <p class="points-badge<?= $pts > 0 ? ' is-scored' : '' ?><?= $exact ? ' is-exact' : '' ?>">
+                        <strong><?= $pts > 0 ? '+' : '' ?><?= $pts ?></strong>
+                        <span class="reason"><?= $pts === 1 ? 'ponto' : 'pontos' ?> · <?= e($pred ? $reason : 'Sem palpite') ?></span>
+                    </p>
+                <?php endif; ?>
+            <?php elseif ($locked): ?>
+                <p class="status">
+                    <?= icon('lock') ?>
+                    <span><?= e($skipReason ? 'Não salvo: ' . $skipReason : $lockText) ?></span>
+                    <?php if ($pred): ?><span class="status-text">· seu palpite fica guardado</span><?php endif; ?>
+                </p>
+            <?php else: ?>
+                <p class="status">
+                    <?= icon('lock') ?>
+                    <span>Fechou às <?= e(kick_clock($kick)) ?></span>
+                    <span class="status-text">· <?= $pred ? 'Aguardando o resultado' : 'Você não palpitou' ?></span>
+                </p>
+            <?php endif; ?>
+        </div>
+        <?php if (isset($c['others'][$id])) { render_others_predictions($c['others'][$id], (int) $user['id'], $finished); } ?>
+    </li>
     <?php
 }
 
@@ -1045,7 +1178,7 @@ function league_chip(array $league): string
         . '<span>' . e(($league['short_name'] ?? '') ?: $league['name']) . '</span></span>';
 }
 
-/** Abas de campeonato da aba Palpites (só quando o bolão tem mais de uma liga). */
+/** Abas de campeonato da aba Rodada (só quando o bolão tem mais de uma liga): bandeira, escudo e nome curto. */
 function render_league_tabs(array $c): void
 {
     if (count($c['leagues']) < 2) {
@@ -1055,8 +1188,13 @@ function render_league_tabs(array $c): void
     <nav class="league-tabs" aria-label="Campeonatos">
         <?php foreach ($c['leagues'] as $league):
             $active = (int) $league['id'] === (int) $c['leagueId'];
+            $logo = espn_img($league['logo_url'] ?? null, 40);
         ?>
-            <a class="league-tab" href="<?= tab_href($c['groupId'], 'palpites', '&amp;league=' . (int) $league['id']) ?>"<?= $active ? ' aria-current="page"' : '' ?>><?= e($league['name']) ?></a>
+            <a class="league-tab" href="<?= tab_href($c['groupId'], 'rodada', '&amp;league=' . (int) $league['id']) ?>"<?= $active ? ' aria-current="page"' : '' ?>>
+                <?= country_flag_svg((string) ($league['country'] ?? 'OUT')) ?>
+                <?php if ($logo): ?><img class="league-logo" src="<?= e($logo) ?>" width="20" height="20" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()"><?php endif; ?>
+                <span><?= e(($league['short_name'] ?? '') ?: $league['name']) ?></span>
+            </a>
         <?php endforeach; ?>
     </nav>
     <?php
@@ -1071,7 +1209,7 @@ function render_round_jump(array $c): void
     ?>
     <form method="get" action="group.php" class="round-jump">
         <input type="hidden" name="id" value="<?= (int) $c['groupId'] ?>">
-        <input type="hidden" name="tab" value="palpites">
+        <input type="hidden" name="tab" value="rodada">
         <input type="hidden" name="league" value="<?= (int) $c['leagueId'] ?>">
         <label class="visually-hidden" for="f-round-jump">Escolher rodada</label>
         <select id="f-round-jump" name="round" data-autosubmit>
@@ -1081,5 +1219,99 @@ function render_round_jump(array $c): void
         </select>
         <button type="submit" class="btn ghost small" data-autosubmit-fallback>Ir</button>
     </form>
+    <?php
+}
+
+/**
+ * Aba Jogos: calendário de todos os campeonatos do bolão, de 3 dias atrás a 14 à frente, por dia
+ * ("Hoje", "Amanhã", "sáb, 02/11"). Só leitura; cada jogo leva à rodada dele na aba Rodada.
+ */
+function render_jogos(array $c): void
+{
+    $gid = $c['groupId'];
+    $now = $c['now'];
+    $leagueIds = array_map('intval', array_column($c['leagues'], 'id'));
+    $filter = (int) ($_GET['liga'] ?? 0);
+    if ($filter && in_array($filter, $leagueIds, true)) {
+        $leagueIds = [$filter];
+    } else {
+        $filter = 0;
+    }
+    $byLeague = array_column($c['leagues'], null, 'id');
+
+    $stmt = db()->prepare(
+        'SELECT m.*, ' . team_columns_sql() . '
+         FROM matches m ' . team_joins_sql() . '
+         WHERE m.league_id IN (' . placeholders($leagueIds) . ') AND m.kickoff_at BETWEEN ? AND ? AND ' . not_void_sql('m') . '
+         ORDER BY m.kickoff_at, m.id'
+    );
+    $stmt->execute(array_merge($leagueIds, [date('Y-m-d 00:00:00', $now - 3 * 86400), date('Y-m-d 23:59:59', $now + 14 * 86400)]));
+    $days = [];
+    foreach ($stmt->fetchAll() as $m) {
+        $days[substr($m['kickoff_at'], 0, 10)][] = $m;
+    }
+    $today = date('Y-m-d', $now);
+    $tomorrow = date('Y-m-d', $now + 86400);
+    $yesterday = date('Y-m-d', $now - 86400);
+    ?>
+    <h2 class="section-title">Jogos</h2>
+
+    <?php if (count($c['leagues']) > 1): ?>
+        <form method="get" action="group.php" class="ranking-filter">
+            <input type="hidden" name="id" value="<?= (int) $gid ?>">
+            <input type="hidden" name="tab" value="jogos">
+            <div class="field">
+                <label for="f-jogos-liga">Campeonato</label>
+                <div class="control">
+                    <select id="f-jogos-liga" name="liga" data-autosubmit>
+                        <option value="">Todos</option>
+                        <?php foreach ($c['leagues'] as $league): ?>
+                            <option value="<?= (int) $league['id'] ?>"<?= $filter === (int) $league['id'] ? ' selected' : '' ?>><?= e($league['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="actions"><button type="submit" class="btn ghost small" data-autosubmit-fallback>Ver</button></div>
+        </form>
+    <?php endif; ?>
+
+    <?php if (!$days): ?>
+        <section class="panel empty-state"><p>Nenhum jogo de 3 dias atrás até daqui a duas semanas.</p></section>
+        <?php return; ?>
+    <?php endif; ?>
+
+    <?php foreach ($days as $day => $list):
+        $ts = strtotime($day . ' 12:00:00');
+        $title = $day === $today ? 'Hoje' : ($day === $tomorrow ? 'Amanhã' : ($day === $yesterday ? 'Ontem' : PT_DAYS[(int) date('w', $ts)] . ', ' . date('d/m', $ts)));
+    ?>
+        <section class="day-block" aria-labelledby="dia-<?= e($day) ?>">
+            <h3 class="day-title<?= $day === $today ? ' is-today' : '' ?>" id="dia-<?= e($day) ?>"><?= e($title) ?></h3>
+            <ul class="game-list">
+                <?php foreach ($list as $m):
+                    $league = $byLeague[(int) $m['league_id']] ?? ['country' => 'OUT', 'name' => '', 'short_name' => ''];
+                    $kick = strtotime($m['kickoff_at']);
+                    $href = tab_href($gid, 'rodada', '&amp;league=' . (int) $m['league_id'] . '&amp;round=' . (int) $m['round']) . '#jogo-' . (int) $m['id'];
+                ?>
+                    <li>
+                        <a class="game-row<?= is_live($m) ? ' is-live' : '' ?>" href="<?= $href ?>">
+                            <span class="game-league" title="<?= e($league['name']) ?>"><?= country_flag_svg((string) $league['country']) ?><span class="visually-hidden"><?= e($league['name']) ?></span></span>
+                            <span class="game-team is-home"><span class="game-name"><?= e($m['home_team']) ?></span><?= team_badge($m, 'home', 'sm') ?></span>
+                            <span class="game-score">
+                                <?php if ($m['home_score'] !== null): ?>
+                                    <strong><?= (int) $m['home_score'] ?> × <?= (int) $m['away_score'] ?></strong>
+                                <?php elseif (is_live($m)): ?>
+                                    <strong><?= (int) $m['live_home_score'] ?> × <?= (int) $m['live_away_score'] ?></strong>
+                                    <span class="badge is-live"><span class="live-dot" aria-hidden="true"></span>Ao vivo</span>
+                                <?php else: ?>
+                                    <time datetime="<?= e(date('c', $kick)) ?>"><?= e(kick_clock($kick)) ?></time>
+                                <?php endif; ?>
+                            </span>
+                            <span class="game-team is-away"><?= team_badge($m, 'away', 'sm') ?><span class="game-name"><?= e($m['away_team']) ?></span></span>
+                        </a>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </section>
+    <?php endforeach; ?>
     <?php
 }

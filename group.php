@@ -9,20 +9,22 @@ $uid = (int) $user['id'];
 $isOwner = (int) $group['owner_id'] === $uid;
 $now = time();
 
-$tabs = $isOwner
-    ? ['palpites' => 'Palpites', 'ranking' => 'Ranking', 'participantes' => 'Participantes', 'configurar' => 'Configurar']
-    : ['palpites' => 'Palpites', 'ranking' => 'Ranking', 'participantes' => 'Participantes', 'regras' => 'Regras'];
+$tabs = ['rodada' => 'Rodada', 'jogos' => 'Jogos', 'ranking' => 'Ranking', 'participantes' => 'Participantes'];
+$tabs += $isOwner ? ['configurar' => 'Configurar'] : ['regras' => 'Regras'];
 
-$tab = (string) ($_GET['tab'] ?? 'palpites');
+$tab = (string) ($_GET['tab'] ?? 'rodada');
+if ($tab === 'palpites') {
+    $tab = 'rodada'; // nome antigo da aba, de links já compartilhados
+}
 if ($tab === 'configurar' && !$isOwner) {
     flash_set('alert', 'Só o organizador pode alterar as configurações deste bolão.');
     redirect('group.php?id=' . $groupId . '&tab=regras');
 }
 if (!isset($tabs[$tab])) {
-    $tab = 'palpites';
+    $tab = 'rodada';
 }
 
-// Ligas e nomes
+// Ligas do bolão
 $leagueIds = group_league_ids($groupId);
 $in = placeholders($leagueIds);
 $stmt = db()->prepare("SELECT id, name, short_name, country, kind, logo_url FROM leagues WHERE id IN ($in) ORDER BY sort_order, name");
@@ -31,7 +33,7 @@ $leagues = $stmt->fetchAll();
 $leagueNames = array_column($leagues, 'name');
 $validLeagueIds = array_map('intval', array_column($leagues, 'id'));
 
-// Campeonato da aba Palpites: o pedido, ou o que tem o próximo jogo, ou o primeiro
+// Campeonato da aba Rodada: o pedido, ou o que tem o próximo jogo, ou o primeiro
 $leagueId = (int) ($_GET['league'] ?? 0);
 if (!in_array($leagueId, $validLeagueIds, true)) {
     $stmt = db()->prepare(
@@ -43,17 +45,10 @@ if (!in_array($leagueId, $validLeagueIds, true)) {
     $leagueId = (int) $stmt->fetchColumn() ?: ($validLeagueIds[0] ?? 0);
 }
 
-// Jogos do campeonato escolhido (para as rodadas e o estado de cada uma). Adiados e cancelados ficam fora.
-$stmt = db()->prepare(
-    'SELECT m.*, l.name AS league_name, ' . team_columns_sql() . '
-     FROM matches m
-     JOIN leagues l ON l.id = m.league_id
-     ' . team_joins_sql() . '
-     WHERE m.league_id = ? AND ' . not_void_sql('m') . '
-     ORDER BY m.kickoff_at, m.id'
-);
-$stmt->execute([$leagueId]);
-$allMatches = $stmt->fetchAll();
+// Rodadas do campeonato escolhido: atual, abertas e bloqueadas, pela regra do bolão (includes/rounds.php).
+// Adiados e cancelados ficam fora.
+[$rctx, $byId] = round_context($leagueId, $group, $now);
+$allMatches = array_values(array_filter($byId, fn ($m) => !is_void($m)));
 
 $stmt = db()->prepare('SELECT match_id, home_pred, away_pred, points FROM predictions WHERE user_id = ? AND group_id = ?');
 $stmt->execute([$uid, $groupId]);
@@ -62,47 +57,51 @@ foreach ($stmt->fetchAll() as $p) {
     $mine[(int) $p['match_id']] = $p;
 }
 
-$rounds = [];
-$roundLabels = []; // número => nome ("Rodada 33", "Semifinal")
+$rounds = $rctx['numbers'];
+$roundLabels = []; // número => nome ("Rodada 33", "Semifinal · ida")
 $roundStats = [];
-$recent = $now - 3 * 86400;
-$pendingRounds = [];
-foreach ($allMatches as $m) {
-    $r = (int) $m['round'];
-    $rounds[$r] = $r;
-    if (!isset($roundLabels[$r])) {
-        $roundLabels[$r] = round_label($m);
-    }
-    if (!isset($roundStats[$r])) {
-        $roundStats[$r] = ['total' => 0, 'finished' => 0, 'open' => 0, 'pending' => 0];
-    }
-    $roundStats[$r]['total']++;
-    if ($m['home_score'] !== null) {
-        $roundStats[$r]['finished']++;
-    } else {
-        // Jogo sem placar há mais de 3 dias (ex.: copa antiga) não prende a rodada padrão.
-        if (strtotime($m['kickoff_at']) > $recent) {
-            $pendingRounds[] = $r;
-        }
-        if (is_open($m)) {
-            $roundStats[$r]['open']++;
-            if (!isset($mine[(int) $m['id']])) {
-                $roundStats[$r]['pending']++;
+foreach ($rctx['rounds'] as $r => $info) {
+    $roundLabels[$r] = $info['label'];
+    $stat = ['total' => count($info['ids']), 'finished' => 0, 'open' => 0, 'pending' => 0,
+        'state' => round_ui_state($rctx, $r, $byId)];
+    foreach ($info['ids'] as $id) {
+        $m = $byId[$id];
+        if ($m['home_score'] !== null) {
+            $stat['finished']++;
+        } elseif (can_predict($m, $rctx)) {
+            $stat['open']++;
+            if (!isset($mine[$id])) {
+                $stat['pending']++;
             }
         }
     }
+    $roundStats[$r] = $stat;
 }
-ksort($rounds);
-$rounds = array_values($rounds);
 
-// Rodada: a pedida, ou a primeira com jogos ainda não encerrados, ou a última
+// Rodada: a pedida, ou a atual
 $round = (int) ($_GET['round'] ?? 0);
 if (!in_array($round, $rounds, true)) {
-    $round = $pendingRounds ? min($pendingRounds) : ($rounds ? max($rounds) : 1);
+    $round = $rctx['current'] ?? ($rounds ? max($rounds) : 1);
 }
-$matches = array_values(array_filter($allMatches, function ($m) use ($round) {
-    return (int) $m['round'] === $round;
-}));
+$matches = [];
+foreach ($rctx['rounds'][$round]['ids'] ?? [] as $id) {
+    $matches[] = $byId[$id];
+}
+
+// Jogos remarcados de outras rodadas que caem na semana da rodada atual (só na visão da rodada atual).
+$rescheduled = [];
+if ($round === $rctx['current'] && !$rctx['over'] && isset($rctx['rounds'][$round])) {
+    $cur = $rctx['rounds'][$round];
+    $from = (int) $cur['start'] - 86400;
+    $until = $rctx['horizon'] ?? ((int) $cur['end'] + ROUND_LATE_MARGIN);
+    foreach ($rctx['where'] as $id => [$origin, $isResched]) {
+        $t = strtotime($byId[$id]['kickoff_at']);
+        if ($isResched && $origin !== $round && $t >= $from && $t <= $until) {
+            $rescheduled[] = $byId[$id] + ['origin_label' => $roundLabels[$origin] ?? ''];
+        }
+    }
+    usort($rescheduled, fn ($a, $b) => strcmp($a['kickoff_at'], $b['kickoff_at']));
+}
 
 // Ranking e minha posição
 $ranking = ranking_with_positions(group_ranking($groupId));
@@ -134,8 +133,18 @@ $roundRanking = $rankRound
     ? ranking_with_positions(group_ranking($groupId, $rankRound['round'], $rankRound['league_id']))
     : [];
 
-// Palpites de todos nos jogos já fechados desta rodada (nunca dos abertos)
-$others = $tab === 'palpites' ? closed_match_predictions($groupId, $matches) : [];
+// Palpites de todos nos jogos já fechados desta rodada (nunca dos que ainda não começaram)
+$others = $tab === 'rodada' ? closed_match_predictions($groupId, array_merge($matches, $rescheduled)) : [];
+
+// Meus pontos e minha posição na rodada mostrada (cabeçalho da rodada encerrada)
+$roundMe = null;
+if ($tab === 'rodada' && ($roundStats[$round]['finished'] ?? 0) > 0) {
+    foreach (ranking_with_positions(group_ranking($groupId, $round, $leagueId)) as $row) {
+        if ((int) $row['id'] === $uid) {
+            $roundMe = $row;
+        }
+    }
+}
 
 // Mensagens deixadas por outra página (PRG)
 $predictFlash = flash_take('predict');
@@ -164,7 +173,11 @@ $ctx = [
     'leagueQs' => '&amp;league=' . $leagueId,
     'roundStats' => $roundStats,
     'round' => $round,
+    'rctx' => $rctx,                   // contexto das rodadas (includes/rounds.php)
     'matches' => $matches,
+    'rescheduled' => $rescheduled,     // remarcados de outras rodadas que caem nesta semana
+    'roundMe' => $roundMe,             // minha linha no ranking da rodada mostrada
+    'leagueName' => (string) (array_column($leagues, 'name', 'id')[$leagueId] ?? ''),
     'mine' => $mine,
     'now' => $now,
     'predictFlash' => $predictFlash,
@@ -192,6 +205,9 @@ switch ($tab) {
         break;
     case 'regras':
         render_regras($ctx);
+        break;
+    case 'jogos':
+        render_jogos($ctx);
         break;
     default:
         render_palpites($ctx);
