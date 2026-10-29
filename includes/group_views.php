@@ -289,7 +289,7 @@ function render_palpites(array $c): void
 
                 <div class="board">
                     <div class="side">
-                        <?= team_crest($m['home_team']) ?>
+                        <?= team_badge($m, 'home') ?>
                         <?php if ($open): ?>
                             <label class="team" for="h-<?= $id ?>"><?= e($m['home_team']) ?></label>
                         <?php else: ?>
@@ -346,7 +346,7 @@ function render_palpites(array $c): void
                     <?php endif; ?>
 
                     <div class="side">
-                        <?= team_crest($m['away_team']) ?>
+                        <?= team_badge($m, 'away') ?>
                         <?php if ($open): ?>
                             <label class="team" for="a-<?= $id ?>"><?= e($m['away_team']) ?></label>
                         <?php else: ?>

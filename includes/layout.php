@@ -123,12 +123,13 @@ function team_initials(string $team): string
 }
 
 /**
- * Escudo SVG do time: formato de escudo, cor e desenho (liso, meio a meio, faixa,
- * listras ou faixa diagonal) escolhidos a partir do nome, e a sigla no centro.
+ * Escudo SVG do time: formato de escudo, desenho (liso, meio a meio, faixa, listras ou faixa diagonal)
+ * e a sigla no centro. Com as cores do time na ESPN ($c1 fundo, $c2 desenho, sem "#"), usa essas cores;
+ * sem elas (ou se são quase iguais, ou as duas quase brancas ou quase pretas), a cor sai do nome.
  * O mesmo nome gera sempre o mesmo escudo. Decorativo: o nome do time vem ao lado.
- * $size: '' (médio), 'sm' ou 'lg'.
+ * $size: '' (médio), 'sm' ou 'lg'. $abbr: sigla da ESPN (senão, team_initials()).
  */
-function team_crest(string $team, string $size = ''): string
+function team_crest(string $team, string $size = '', ?string $c1 = null, ?string $c2 = null, ?string $abbr = null): string
 {
     static $count = 0;
     $count++;
@@ -140,6 +141,14 @@ function team_crest(string $team, string $size = ''): string
     $main = 'hsl(' . $hue . ', ' . $sat . '%, 36%)';
     $second = (($hash >> 12) % 2) ? '#f1f4f9' : 'hsl(' . $hue . ', ' . $sat . '%, 16%)';
     $pattern = ($hash >> 14) % 5;
+    $text = '#fff';
+
+    $colors = crest_colors($c1, $c2);
+    if ($colors !== null) {
+        [$main, $second, $mainLum] = $colors;
+        $text = $mainLum > 0.45 ? '#1a1b3a' : '#fff';
+    }
+    $outline = $text === '#fff' ? 'rgba(0,0,0,.4)' : 'rgba(255,255,255,.55)';
 
     $shield = 'M20 1.5L37.5 6.8V21c0 11.8-7.6 19.6-17.5 23.5C10.1 40.6 2.5 32.8 2.5 21V6.8z';
     $shapes = [
@@ -149,8 +158,12 @@ function team_crest(string $team, string $size = ''): string
         3 => '<rect x="9" y="0" width="5.5" height="46" fill="' . $second . '"/><rect x="25.5" y="0" width="5.5" height="46" fill="' . $second . '"/>',
         4 => '<path d="M-2 10L10 -2L44 32L32 44z" fill="' . $second . '"/>',
     ];
+    if ($colors !== null && $pattern === 0) {
+        $pattern = 2; // com cores do time, sempre mostra a segunda cor
+    }
 
-    $letters = team_initials($team);
+    $abbr = $abbr !== null ? preg_replace('/[^\p{L}\p{N}]/u', '', $abbr) : '';
+    $letters = $abbr !== '' ? mb_strtoupper(mb_substr($abbr, 0, 3, 'UTF-8'), 'UTF-8') : team_initials($team);
     $fontSize = mb_strlen($letters, 'UTF-8') >= 3 ? 13 : 15.5;
 
     return '<svg class="crest' . ($size !== '' ? ' crest-' . e($size) : '') . '" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true" focusable="false">'
@@ -159,9 +172,61 @@ function team_crest(string $team, string $size = ''): string
         . '<path d="' . $shield . '" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="1.5"/>'
         . '<path d="' . $shield . '" fill="none" stroke="rgba(0,0,0,.22)" stroke-width=".8"/>'
         . '<text x="20" y="24.5" text-anchor="middle" dominant-baseline="middle" font-family="\'Big Shoulders Display\', \'Arial Narrow\', sans-serif" '
-        . 'font-weight="800" font-size="' . $fontSize . '" letter-spacing=".4" fill="#fff" stroke="rgba(0,0,0,.4)" stroke-width="1.6" '
+        . 'font-weight="800" font-size="' . $fontSize . '" letter-spacing=".4" fill="' . $text . '" stroke="' . $outline . '" stroke-width="1.6" '
         . 'paint-order="stroke" stroke-linejoin="round">' . e($letters) . '</text>'
         . '</svg>';
+}
+
+/** Luminância relativa (0 a 1) de uma cor "rrggbb". */
+function color_luminance(string $hex): float
+{
+    $c = [];
+    foreach ([0, 2, 4] as $i) {
+        $v = hexdec(substr($hex, $i, 2)) / 255;
+        $c[] = $v <= 0.03928 ? $v / 12.92 : (($v + 0.055) / 1.055) ** 2.4;
+    }
+    return 0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2];
+}
+
+/**
+ * Cores do escudo a partir das cores da ESPN: ["#fundo", "#desenho", luminância do fundo] ou null quando
+ * não servem (faltando, quase iguais, ou as duas quase brancas ou quase pretas). Fundo muito claro troca
+ * de lugar com a segunda cor.
+ */
+function crest_colors(?string $c1, ?string $c2): ?array
+{
+    $ok = fn ($c) => is_string($c) && preg_match('/^[0-9a-fA-F]{6}$/', $c);
+    if (!$ok($c1) || !$ok($c2)) {
+        return null;
+    }
+    $l1 = color_luminance($c1);
+    $l2 = color_luminance($c2);
+    $contrast = (max($l1, $l2) + 0.05) / (min($l1, $l2) + 0.05);
+    if ($contrast < 1.4 || ($l1 > 0.8 && $l2 > 0.8) || ($l1 < 0.02 && $l2 < 0.02)) {
+        return null;
+    }
+    if ($l1 > 0.8) {
+        [$c1, $c2, $l1] = [$c2, $c1, $l2];
+    }
+    return ['#' . strtolower($c1), '#' . strtolower($c2), $l1];
+}
+
+/**
+ * Escudo do time num jogo: o escudo da ESPN (reduzido pelo CDN, carregado só quando aparece na tela)
+ * por cima do escudo desenhado com as cores do time. Se a imagem não carregar, ela some e fica o desenho.
+ * $m: linha de jogo com as colunas de team_columns_sql(); $side: 'home' ou 'away'.
+ */
+function team_badge(array $m, string $side, string $size = ''): string
+{
+    $name = (string) ($m[$side . '_team'] ?? '');
+    $crest = team_crest($name, $size, $m[$side . '_color'] ?? null, $m[$side . '_color2'] ?? null, $m[$side . '_abbr'] ?? null);
+    $logo = espn_img($m[$side . '_logo'] ?? null, $size === 'sm' ? 48 : 96);
+    if ($logo === null) {
+        return '<span class="badge-team' . ($size !== '' ? ' badge-' . e($size) : '') . '">' . $crest . '</span>';
+    }
+    return '<span class="badge-team' . ($size !== '' ? ' badge-' . e($size) : '') . '">' . $crest
+        . '<img src="' . e($logo) . '" width="40" height="40" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"'
+        . ' onload="this.parentNode.classList.add(\'has-logo\')" onerror="this.remove()"></span>';
 }
 
 /**

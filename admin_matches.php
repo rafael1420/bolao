@@ -239,7 +239,7 @@ page_start('Administração', $user, 'wrap', 'admin');
         $params[] = $filterRodada;
     }
     $where[] = not_void_sql('m'); // adiados e cancelados não esperam placar
-    $sql = 'SELECT m.*, l.name AS league_name FROM matches m JOIN leagues l ON l.id = m.league_id'
+    $sql = 'SELECT m.*, l.name AS league_name, ' . team_columns_sql() . ' FROM matches m JOIN leagues l ON l.id = m.league_id ' . team_joins_sql()
         . ' WHERE ' . implode(' AND ', $where)
         . ' ORDER BY m.kickoff_at, m.id LIMIT 1000';
     $stmt = db()->prepare($sql);
@@ -336,9 +336,10 @@ page_start('Administração', $user, 'wrap', 'admin');
 
 <?php elseif ($tab === 'jogos'):
     $matches = db()->query(
-        'SELECT m.*, l.name AS league_name
+        'SELECT m.*, l.name AS league_name, ' . team_columns_sql() . '
          FROM matches m
          JOIN leagues l ON l.id = m.league_id
+         ' . team_joins_sql() . '
          ORDER BY m.kickoff_at DESC, m.id DESC
          LIMIT 500'
     )->fetchAll();
@@ -415,7 +416,7 @@ page_start('Administração', $user, 'wrap', 'admin');
                     $ts = strtotime($m['kickoff_at']); ?>
                     <li class="list-row">
                         <span class="league"><?= e($m['league_name']) ?>, <?= e(mb_strtolower(round_label($m))) ?><?= is_void($m) ? ' · adiado ou cancelado' : '' ?></span>
-                        <span class="list-teams"><?= team_crest($m['home_team'], 'sm') ?><?= e($m['home_team']) ?> <span class="vs">×</span> <?= team_crest($m['away_team'], 'sm') ?><?= e($m['away_team']) ?></span>
+                        <span class="list-teams"><?= team_badge($m, 'home', 'sm') ?><?= e($m['home_team']) ?> <span class="vs">×</span> <?= team_badge($m, 'away', 'sm') ?><?= e($m['away_team']) ?></span>
                         <span class="list-meta"><?= e(date('d/m', $ts) . ' às ' . kick_clock($ts)) ?></span>
                         <span class="list-meta"><?= $m['home_score'] !== null
                             ? 'Placar ' . (int) $m['home_score'] . ' × ' . (int) $m['away_score']
@@ -633,7 +634,7 @@ function admin_row(array $m, array $filters): void
     <li class="admin-row" id="jogo-<?= $id ?>">
         <div class="admin-info">
             <span class="league"><?= e($m['league_name']) ?>, <?= e(mb_strtolower(round_label($m))) ?><?= is_void($m) ? ' · adiado ou cancelado' : '' ?></span>
-            <p class="admin-teams"><?= team_crest($m['home_team'], 'sm') ?><?= e($m['home_team']) ?> <span class="vs" aria-hidden="true">×</span> <?= team_crest($m['away_team'], 'sm') ?><?= e($m['away_team']) ?></p>
+            <p class="admin-teams"><?= team_badge($m, 'home', 'sm') ?><?= e($m['home_team']) ?> <span class="vs" aria-hidden="true">×</span> <?= team_badge($m, 'away', 'sm') ?><?= e($m['away_team']) ?></p>
             <span class="list-meta"><?= e(date('d/m', $ts) . ' às ' . kick_clock($ts)) ?></span>
         </div>
 

@@ -838,6 +838,19 @@ details.confirm > .disclosure-body { border-color: var(--danger-line); backgroun
 }
 .crest-sm { width: 26px; height: 30px; filter: none; }
 .crest-lg { width: 52px; height: 60px; }
+/* Escudo da ESPN por cima do desenhado; quando a imagem carrega, o desenho some. */
+.badge-team { position: relative; display: inline-block; flex: none; line-height: 0; }
+.badge-team > img {
+    position: absolute; inset: 0; width: 100%; height: 100%; padding: 2px;
+    object-fit: contain; opacity: 0; transition: opacity var(--dur-fast);
+}
+.badge-team.has-logo > img { opacity: 1; }
+.badge-team.has-logo > .crest { visibility: hidden; }
+/* Escudos escuros somem no fundo escuro: um círculo claro discreto atrás. */
+:root[data-theme="dark"] .badge-team.has-logo { background: rgba(236, 238, 251, .1); border-radius: 50%; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .badge-team.has-logo { background: rgba(236, 238, 251, .1); border-radius: 50%; }
+}
 
 /* ---------- Entrada e cadastro ---------- */
 .auth-grid {
@@ -1822,6 +1835,7 @@ table.ranking { width: 100%; border-collapse: collapse; }
     overflow-wrap: anywhere;
 }
 .admin-teams .crest { width: 24px; height: 28px; filter: none; }
+.admin-teams .badge-team, .list-teams .badge-team { vertical-align: middle; }
 .admin-teams .vs { color: var(--ink-faint); font-weight: 400; }
 .list-meta { color: var(--ink-soft); font-size: 0.88rem; }
 .score-form {

@@ -45,9 +45,10 @@ if (!in_array($leagueId, $validLeagueIds, true)) {
 
 // Jogos do campeonato escolhido (para as rodadas e o estado de cada uma). Adiados e cancelados ficam fora.
 $stmt = db()->prepare(
-    'SELECT m.*, l.name AS league_name
+    'SELECT m.*, l.name AS league_name, ' . team_columns_sql() . '
      FROM matches m
      JOIN leagues l ON l.id = m.league_id
+     ' . team_joins_sql() . '
      WHERE m.league_id = ? AND ' . not_void_sql('m') . '
      ORDER BY m.kickoff_at, m.id'
 );
