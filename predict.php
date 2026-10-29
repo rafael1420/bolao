@@ -10,34 +10,29 @@ verify_csrf();
 
 $groupId = (int) ($_POST['group_id'] ?? 0);
 $round = (int) ($_POST['round'] ?? 0);
-require_member($groupId, $user['id']);
 
-// Jogos desta rodada, do campeonato escolhido (que precisa ser do grupo). Só os abertos aceitam palpite.
+// Jogos enviados, das ligas do bolão. Quem decide se aceita é a regra de rodada (includes/rounds.php):
+// o jogo não começou e a rodada dele está aberta para este bolão (ou é um jogo remarcado da semana).
+$group = require_member($groupId, $user['id']);
 $leagueIds = group_league_ids($groupId);
 $leagueId = (int) ($_POST['league'] ?? 0);
-if (in_array($leagueId, $leagueIds, true)) {
-    $leagueIds = [$leagueId];
-} else {
+if (!in_array($leagueId, $leagueIds, true)) {
     $leagueId = 0;
 }
-$stmt = db()->prepare(
-    'SELECT * FROM matches
-     WHERE league_id IN (' . placeholders($leagueIds) . ') AND round = ?'
-);
-$stmt->execute([...$leagueIds, $round]);
-
+$preds = is_array($_POST['preds'] ?? null) ? $_POST['preds'] : [];
+$ids = array_slice(array_values(array_filter(array_map('intval', array_keys($preds)))), 0, 200);
 $matches = [];
-$allowed = [];
-foreach ($stmt->fetchAll() as $match) {
-    if (is_void($match)) {
-        continue; // adiado ou cancelado: fora do bolão
-    }
-    $id = (int) $match['id'];
-    $matches[$id] = $match;
-    if (is_open($match)) {
-        $allowed[$id] = true;
+if ($ids) {
+    $stmt = db()->prepare(
+        'SELECT * FROM matches
+         WHERE id IN (' . placeholders($ids) . ') AND league_id IN (' . placeholders($leagueIds) . ')'
+    );
+    $stmt->execute(array_merge($ids, $leagueIds));
+    foreach ($stmt->fetchAll() as $match) {
+        $matches[(int) $match['id']] = $match;
     }
 }
+$now = time();
 
 $upsert = db()->prepare(
     'INSERT INTO predictions (user_id, group_id, match_id, home_pred, away_pred)
@@ -45,7 +40,6 @@ $upsert = db()->prepare(
      ON DUPLICATE KEY UPDATE home_pred = VALUES(home_pred), away_pred = VALUES(away_pred)'
 );
 
-$preds = is_array($_POST['preds'] ?? null) ? $_POST['preds'] : [];
 $saved = 0;
 $skipped = [];   // o que não entrou, com motivo, para mostrar na tela
 $keep = [];      // o que a pessoa digitou nesses jogos, para não perder
@@ -64,9 +58,14 @@ foreach ($preds as $matchId => $score) {
     }
 
     $label = $match['home_team'] . ' × ' . $match['away_team'];
+    [$ctx] = round_context((int) $match['league_id'], $group, $now);
+    $status = predict_status($match, $ctx);
+    if ($status['reason'] === 'void') {
+        continue; // adiado ou cancelado: fora do bolão
+    }
     $reason = null;
-    if (!isset($allowed[$matchId])) {
-        $reason = $match['home_score'] !== null ? 'o jogo já terminou' : 'o jogo já começou';
+    if (!$status['ok']) {
+        $reason = predict_reason_text($status, $ctx, $now);
     } elseif ($home === '' || $away === '') {
         $reason = $home === '' ? 'falta o placar do mandante' : 'falta o placar do visitante';
     } elseif (!ctype_digit($home) || !ctype_digit($away) || (int) $home > 30 || (int) $away > 30) {
@@ -90,4 +89,4 @@ flash_set('predict', [
     'keep' => $keep,
 ]);
 
-redirect('group.php?id=' . $groupId . ($leagueId ? '&league=' . $leagueId : '') . '&round=' . $round);
+redirect('group.php?id=' . $groupId . '&tab=rodada' . ($leagueId ? '&league=' . $leagueId : '') . '&round=' . $round);

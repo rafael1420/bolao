@@ -271,6 +271,30 @@ function predict_status(array $m, array $ctx): array
     return $out;
 }
 
+/** Motivo, em texto, de um palpite recusado (ver predict_status()). */
+function predict_reason_text(array $status, array $ctx, int $now): string
+{
+    switch ($status['reason']) {
+        case 'finished':
+            return 'o jogo já terminou';
+        case 'started':
+            return 'o jogo já começou';
+        case 'void':
+            return 'o jogo foi adiado ou cancelado';
+        case 'deadline':
+            return 'o prazo da rodada já passou';
+        case 'locked':
+            if ($status['opens_at'] !== null) {
+                return 'a rodada ainda não abriu (abre ' . kick_day_clock((int) $status['opens_at'], $now) . ')';
+            }
+            if ($status['after'] !== null && isset($ctx['rounds'][$status['after']])) {
+                return 'a rodada ainda não abriu (abre depois da ' . mb_strtolower($ctx['rounds'][$status['after']]['label']) . ')';
+            }
+            return 'a rodada ainda não abriu';
+    }
+    return 'palpite não aceito';
+}
+
 function can_predict(array $m, array $ctx): bool
 {
     return predict_status($m, $ctx)['ok'];
