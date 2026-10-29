@@ -281,6 +281,11 @@ function sync_run(string $mode): array
             $urls[$code] = ESPN_BASE . $league['slug'] . '/scoreboard';
         }
         $boards = espn_fetch_many($urls);
+        foreach ($boards as $code => $board) {
+            if ($board !== null) {
+                sync_league_info($leagues[$code]['id'], $board);
+            }
+        }
 
         // 2) Dias a buscar em cada liga.
         $pending = sync_pending_days($now);
@@ -351,6 +356,21 @@ function sync_run(string $mode): array
     }
 }
 
+/** Guarda o escudo da liga, o nome e o início da temporada atual, como vêm na página padrão da ESPN. */
+function sync_league_info(int $leagueId, array $board): void
+{
+    $league = $board['leagues'][0] ?? [];
+    $logo = (string) ($league['logos'][0]['href'] ?? '');
+    $logo = (strpos($logo, 'https://') === 0 && strlen($logo) <= 255) ? $logo : null;
+    // "2026-27 English Premier League" vira "2026-27"; "2026 Copa do Brasil" vira "2026".
+    $label = preg_match('/^(\d{4}(?:[-\/]\d{2,4})?)/', (string) ($league['season']['displayName'] ?? ''), $m) ? $m[1] : null;
+    $start = isset($league['season']['startDate']) ? strtotime($league['season']['startDate']) : false;
+    db()->prepare(
+        'UPDATE leagues SET logo_url = COALESCE(?, logo_url), season_label = COALESCE(?, season_label),
+            season_start = COALESCE(?, season_start) WHERE id = ?'
+    )->execute([$logo, $label, $start ? date('Y-m-d', $start) : null, $leagueId]);
+}
+
 /** Dias (no formato da ESPN) de jogos que já deviam ter começado e ainda não têm placar. */
 function sync_pending_days(int $now): array
 {
@@ -394,30 +414,45 @@ function sync_save_events(int $leagueId, array $events, array $stages): array
     $insert = $pdo->prepare(
         'INSERT INTO matches
             (league_id, external_id, round, round_label, note, home_team, away_team, kickoff_at,
-             home_score, away_score, live_home_score, live_away_score, status, status_detail)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             home_score, away_score, live_home_score, live_away_score, status, status_detail, home_team_id, away_team_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     $update = $pdo->prepare(
         'UPDATE matches SET round = COALESCE(?, round), round_label = ?, note = ?, home_team = ?, away_team = ?,
             kickoff_at = ?, home_score = ?, away_score = ?, live_home_score = ?, live_away_score = ?,
-            status = ?, status_detail = ?
+            status = ?, status_detail = ?, home_team_id = COALESCE(?, home_team_id), away_team_id = COALESCE(?, away_team_id)
          WHERE id = ?'
     );
 
-    $stats = ['events' => 0, 'new' => 0, 'results' => 0];
+    // Primeiro os times de todos os jogos (uma gravação por time), depois os jogos.
+    $parsed = [];
+    $teams = [];
     foreach ($events as $event) {
         $m = espn_parse_event($event, $stages);
         if ($m === null) {
             continue;
         }
+        foreach (['home', 'away'] as $side) {
+            if ($m[$side] !== null) {
+                $teams[$m[$side]['espn_id']] = $m[$side];
+            }
+        }
+        $parsed[] = $m;
+    }
+    $teamIds = sync_upsert_teams($teams);
+
+    $stats = ['events' => 0, 'new' => 0, 'results' => 0];
+    foreach ($parsed as $m) {
         $stats['events']++;
+        $homeId = $m['home'] ? ($teamIds[$m['home']['espn_id']] ?? null) : null;
+        $awayId = $m['away'] ? ($teamIds[$m['away']['espn_id']] ?? null) : null;
 
         $old = $existing[$m['external_id']] ?? null;
         if ($old === null) {
             $insert->execute([
                 $leagueId, $m['external_id'], $m['round'] ?? 1, $m['round_label'], $m['note'],
                 $m['home_team'], $m['away_team'], $m['kickoff_at'], $m['home_score'], $m['away_score'],
-                $m['live_home_score'], $m['live_away_score'], $m['status'], $m['status_detail'],
+                $m['live_home_score'], $m['live_away_score'], $m['status'], $m['status_detail'], $homeId, $awayId,
             ]);
             $stats['new']++;
             continue;
@@ -426,7 +461,7 @@ function sync_save_events(int $leagueId, array $events, array $stages): array
         $update->execute([
             $m['round'], $m['round_label'], $m['note'], $m['home_team'], $m['away_team'], $m['kickoff_at'],
             $m['home_score'], $m['away_score'], $m['live_home_score'], $m['live_away_score'],
-            $m['status'], $m['status_detail'], $old['id'],
+            $m['status'], $m['status_detail'], $homeId, $awayId, $old['id'],
         ]);
 
         $changed = $old['home_score'] === null
@@ -492,6 +527,8 @@ function espn_parse_event(array $event, array $stages): ?array
     }
 
     return [
+        'home'            => espn_team($home['team'] ?? []),
+        'away'            => espn_team($away['team'] ?? []),
         'external_id'     => (string) $event['id'],
         'round'           => $round,
         'round_label'     => $roundLabel,
@@ -506,6 +543,54 @@ function espn_parse_event(array $event, array $stages): ?array
         'status'          => $state,
         'status_detail'   => isset($type['shortDetail']) ? mb_substr($type['shortDetail'], 0, 40) : null,
     ];
+}
+
+/** Dados do time na ESPN (id, nomes, sigla, escudo e cores). Null sem id. */
+function espn_team(array $team): ?array
+{
+    $id = (string) ($team['id'] ?? '');
+    if ($id === '' || !preg_match('/^[0-9]{1,20}$/', $id)) {
+        return null;
+    }
+    $color = function ($value): ?string {
+        return is_string($value) && preg_match('/^[0-9a-fA-F]{6}$/', $value) ? strtolower($value) : null;
+    };
+    $logo = (string) ($team['logo'] ?? '');
+    return [
+        'espn_id'      => $id,
+        'name'         => mb_substr((string) ($team['displayName'] ?? ''), 0, 100),
+        'short_name'   => isset($team['shortDisplayName']) ? mb_substr((string) $team['shortDisplayName'], 0, 60) : null,
+        'abbreviation' => isset($team['abbreviation']) ? mb_substr((string) $team['abbreviation'], 0, 10) : null,
+        'logo_url'     => (strpos($logo, 'https://') === 0 && strlen($logo) <= 255) ? $logo : null,
+        'color'        => $color($team['color'] ?? null),
+        'alt_color'    => $color($team['alternateColor'] ?? null),
+    ];
+}
+
+/** Grava (ou atualiza) os times e devolve id da ESPN => teams.id. */
+function sync_upsert_teams(array $teams): array
+{
+    if (!$teams) {
+        return [];
+    }
+    $upsert = db()->prepare(
+        'INSERT INTO teams (espn_id, name, short_name, abbreviation, logo_url, color, alt_color)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), short_name = VALUES(short_name),
+             abbreviation = VALUES(abbreviation), logo_url = COALESCE(VALUES(logo_url), logo_url),
+             color = COALESCE(VALUES(color), color), alt_color = COALESCE(VALUES(alt_color), alt_color)'
+    );
+    foreach ($teams as $t) {
+        $upsert->execute([$t['espn_id'], $t['name'], $t['short_name'], $t['abbreviation'], $t['logo_url'], $t['color'], $t['alt_color']]);
+    }
+    $ids = array_keys($teams);
+    $stmt = db()->prepare('SELECT id, espn_id FROM teams WHERE espn_id IN (' . placeholders($ids) . ')');
+    $stmt->execute(array_map('strval', $ids));
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $map[(string) $row['espn_id']] = (int) $row['id'];
+    }
+    return $map;
 }
 
 /** Busca no TheSportsDB as rodadas oficiais que ainda não estão completas no banco. */
