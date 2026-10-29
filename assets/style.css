@@ -302,7 +302,7 @@ main:focus { outline: none; }
 }
 .brand:hover { text-decoration: none; }
 .brand-mark { width: 34px; height: 34px; flex: none; transition: transform var(--dur) var(--ease); }
-.brand:hover .brand-mark { transform: rotate(-12deg) scale(1.04); }
+.brand:hover .brand-mark { transform: scale(1.04); }
 .brand-name {
     font-family: var(--font-display);
     font-weight: 900;
