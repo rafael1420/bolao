@@ -4,7 +4,7 @@ require_once __DIR__ . '/includes/app.php';
 $user = require_login();
 
 $stmt = db()->prepare(
-    'SELECT g.id, g.name, g.owner_id,
+    'SELECT g.id, g.name, g.owner_id, g.round_mode, g.deadline_mode,
             (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) AS members
      FROM bolao_groups g
      JOIN group_members m ON m.group_id = g.id
@@ -22,39 +22,8 @@ $uid = (int) $user['id'];
 // Poucas consultas no total, qualquer que seja o número de bolões.
 $groupIds = array_map('intval', array_column($groups, 'id'));
 $rankings = group_rankings($groupIds);
-$pending = [];
-$nextKick = [];
-if ($groupIds) {
-    $in = placeholders($groupIds);
-
-    $stmt = db()->prepare(
-        "SELECT gl.group_id, COUNT(*) AS n
-         FROM group_leagues gl
-         JOIN matches m ON m.league_id = gl.league_id
-         WHERE gl.group_id IN ($in) AND m.kickoff_at > ? AND m.home_score IS NULL
-           AND (m.status IS NULL OR m.status NOT IN ('void', 'in', 'post'))
-           AND NOT EXISTS (SELECT 1 FROM predictions p
-                           WHERE p.match_id = m.id AND p.user_id = ? AND p.group_id = gl.group_id)
-         GROUP BY gl.group_id"
-    );
-    $stmt->execute(array_merge($groupIds, [$nowSql, $uid]));
-    foreach ($stmt->fetchAll() as $row) {
-        $pending[(int) $row['group_id']] = (int) $row['n'];
-    }
-
-    $stmt = db()->prepare(
-        "SELECT gl.group_id, MIN(m.kickoff_at) AS next_kick
-         FROM group_leagues gl
-         JOIN matches m ON m.league_id = gl.league_id
-         WHERE gl.group_id IN ($in) AND m.kickoff_at > ? AND m.home_score IS NULL
-           AND (m.status IS NULL OR m.status NOT IN ('void', 'in', 'post'))
-         GROUP BY gl.group_id"
-    );
-    $stmt->execute(array_merge($groupIds, [$nowSql]));
-    foreach ($stmt->fetchAll() as $row) {
-        $nextKick[(int) $row['group_id']] = strtotime($row['next_kick']);
-    }
-}
+// Pendentes e próximo prazo seguem a regra de rodada de cada bolão (só contam jogos que já dá para palpitar).
+$predictable = group_predictable($groups, $uid, $now);
 
 foreach ($groups as &$group) {
     $gid = (int) $group['id'];
@@ -66,8 +35,8 @@ foreach ($groups as &$group) {
     }
     $group['pos'] = $position ? $position['pos'] : null;
     $group['points'] = $position ? $position['total'] : 0;
-    $group['pending'] = $pending[$gid] ?? 0;
-    $group['next'] = $nextKick[$gid] ?? null;
+    $group['pending'] = $predictable[$gid]['pending'] ?? 0;
+    $group['next'] = $predictable[$gid]['next'] ?? null;
 }
 unset($group);
 
@@ -129,7 +98,7 @@ $firstName = (string) (preg_split('/\s+/u', trim((string) $user['name']))[0] ?? 
     <?php if ($totalPending > 0): ?>
         <div class="dash-summary" role="status">
             <?= icon('clock') ?>
-            <p><?= e(plural($totalPending, 'palpite pendente', 'palpites pendentes')) ?><?= $groupsPending > 1 ? ' em ' . (int) $groupsPending . ' bolões' : '' ?>. Palpite antes de cada jogo começar.</p>
+            <p><?= e(plural($totalPending, 'palpite pendente', 'palpites pendentes')) ?><?= $groupsPending > 1 ? ' em ' . (int) $groupsPending . ' bolões' : '' ?>. Palpite antes de cada prazo.</p>
         </div>
     <?php else: ?>
         <div class="dash-summary is-ok" role="status">
@@ -176,9 +145,9 @@ $firstName = (string) (preg_split('/\s+/u', trim((string) $user['name']))[0] ?? 
                             <span class="pill is-ok"><?= icon('check') ?>Palpites em dia</span>
                         <?php endif; ?>
                         <?php if ($group['next']): ?>
-                            <span class="next-game"><?= icon('calendar') ?>Próximo jogo: <?= e(kick_day_clock((int) $group['next'], $now)) ?></span>
+                            <span class="next-game"><?= icon('calendar') ?>Próximo prazo: <?= e(kick_day_clock((int) $group['next'], $now)) ?></span>
                         <?php else: ?>
-                            <span class="next-game"><?= icon('calendar') ?>Sem jogos marcados</span>
+                            <span class="next-game"><?= icon('calendar') ?>Nenhum jogo aberto para palpite</span>
                         <?php endif; ?>
                     </span>
                 </a>

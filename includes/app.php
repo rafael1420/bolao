@@ -498,6 +498,82 @@ function group_scored_rounds(int $groupId): array
 }
 
 /**
+ * Para cada bolão: quantos jogos dá para palpitar agora e ainda não têm meu palpite ('pending') e o
+ * próximo prazo de um jogo palpitável ('next', timestamp ou null). Segue a regra de rodada de cada bolão.
+ * Poucas consultas no total: os jogos de todas as ligas envolvidas (de 20 dias atrás a 90 à frente)
+ * e os meus palpites; o contexto de cada liga é montado uma vez por modo.
+ */
+function group_predictable(array $groups, int $userId, int $now): array
+{
+    $groupIds = array_map(fn ($g) => (int) $g['id'], $groups);
+    if (!$groupIds) {
+        return [];
+    }
+    $stmt = db()->prepare('SELECT group_id, league_id FROM group_leagues WHERE group_id IN (' . placeholders($groupIds) . ')');
+    $stmt->execute($groupIds);
+    $leaguesOf = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $leaguesOf[(int) $row['group_id']][] = (int) $row['league_id'];
+    }
+    $leagueIds = array_values(array_unique(array_merge([], ...array_values($leaguesOf ?: [[]]))));
+    $out = array_fill_keys($groupIds, ['pending' => 0, 'next' => null]);
+    if (!$leagueIds) {
+        return $out;
+    }
+
+    $stmt = db()->prepare(
+        'SELECT id, league_id, round, round_label, kickoff_at, home_score, away_score, status FROM matches
+         WHERE league_id IN (' . placeholders($leagueIds) . ') AND kickoff_at BETWEEN ? AND ?
+         ORDER BY kickoff_at, id'
+    );
+    $stmt->execute(array_merge($leagueIds, [date('Y-m-d H:i:s', $now - 20 * 86400), date('Y-m-d H:i:s', $now + 90 * 86400)]));
+    $byLeague = [];
+    foreach ($stmt->fetchAll() as $m) {
+        $byLeague[(int) $m['league_id']][] = $m;
+    }
+
+    $stmt = db()->prepare(
+        'SELECT p.group_id, p.match_id FROM predictions p JOIN matches m ON m.id = p.match_id
+         WHERE p.user_id = ? AND p.group_id IN (' . placeholders($groupIds) . ') AND m.kickoff_at > ?'
+    );
+    $stmt->execute(array_merge([$userId], $groupIds, [date('Y-m-d H:i:s', $now)]));
+    $picked = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $picked[(int) $row['group_id']][(int) $row['match_id']] = true;
+    }
+
+    $ctxCache = [];
+    foreach ($groups as $g) {
+        $gid = (int) $g['id'];
+        $mode = (string) ($g['round_mode'] ?? 'rodada');
+        $deadline = (string) ($g['deadline_mode'] ?? 'jogo');
+        foreach ($leaguesOf[$gid] ?? [] as $leagueId) {
+            $key = $leagueId . '|' . $mode . '|' . $deadline;
+            if (!isset($ctxCache[$key])) {
+                $ctxCache[$key] = round_ctx_build($byLeague[$leagueId] ?? [], $mode, $deadline, $now);
+            }
+            $ctx = $ctxCache[$key];
+            foreach ($byLeague[$leagueId] ?? [] as $m) {
+                if (!can_predict($m, $ctx)) {
+                    continue;
+                }
+                if (!isset($picked[$gid][(int) $m['id']])) {
+                    $out[$gid]['pending']++;
+                }
+                // Prazo: o início do jogo, ou o 1º jogo da rodada com prazo por rodada.
+                $close = strtotime($m['kickoff_at']);
+                [$number, $resched] = $ctx['where'][(int) $m['id']] ?? [(int) $m['round'], false];
+                if (!$resched && $ctx['deadline'] === 'rodada' && !empty($ctx['rounds'][$number]['start'])) {
+                    $close = min($close, (int) $ctx['rounds'][$number]['start']);
+                }
+                $out[$gid]['next'] = $out[$gid]['next'] === null ? $close : min($out[$gid]['next'], $close);
+            }
+        }
+    }
+    return $out;
+}
+
+/**
  * Pontos de cada participante em cada rodada (jogos encerrados das ligas atuais do bolão), numa consulta.
  * Devolve [user_id => ["liga-rodada" => pontos]]. Base da visão "Rodada a rodada" do ranking.
  */

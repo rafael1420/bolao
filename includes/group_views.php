@@ -667,7 +667,8 @@ function render_participantes(array $c): void
                         <?php if ($rowId === (int) $c['user']['id']): ?><span class="you">você</span><?php endif; ?>
                     </span>
                 </div>
-                <span class="person-points"><strong><?= (int) $row['total'] ?></strong> pontos</span>
+                <span class="person-points"><strong><?= (int) $row['total'] ?></strong> pontos
+                    <span class="muted-small"><?= e(plural((int) $row['exact'], 'exato', 'exatos')) ?> · <?= e(plural((int) $row['outcomes'], 'acerto', 'acertos')) ?></span></span>
 
                 <?php if ($isOwner && !$isOwnerRow): ?>
                     <details class="disclosure confirm person-remove">
