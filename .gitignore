@@ -1,6 +1,7 @@
-includes/config.php
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
 .DS_Store
 .claude/settings.local.json
-dist/
-release/
-web/node_modules/
