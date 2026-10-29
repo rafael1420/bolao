@@ -65,10 +65,19 @@ if ($action === 'remove_password') {
 }
 
 if ($action === 'leagues') {
-    $leagueIds = array_map('intval', array_column($pdo->query('SELECT id FROM leagues')->fetchAll(), 'id'));
-    $selected = array_values(array_intersect(array_map('intval', (array) ($_POST['leagues'] ?? [])), $leagueIds));
+    $stmt = $pdo->prepare('SELECT league_id FROM group_leagues WHERE group_id = ?');
+    $stmt->execute([$groupId]);
+    $before = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    // Ativas no catálogo, ou que o bolão já tinha (uma liga desativada não sai sozinha).
+    $selected = array_values(array_unique(array_intersect(
+        array_map('intval', (array) ($_POST['leagues'] ?? [])),
+        league_valid_ids($before)
+    )));
     if (!$selected) {
         config_fail('ligas', ['leagues' => 'Marque pelo menos uma liga.'], ['leagues' => []], $back);
+    }
+    if (count($selected) > MAX_GROUP_LEAGUES) {
+        config_fail('ligas', ['leagues' => 'Escolha no máximo ' . MAX_GROUP_LEAGUES . ' ligas.'], ['leagues' => $selected], $back);
     }
 
     $scored = group_scored_counts($groupId);
@@ -80,11 +89,27 @@ if ($action === 'leagues') {
     }
     $pdo->commit();
     recalculate_group($groupId);
+    $fetching = fetch_new_leagues(array_diff($selected, $before));
 
     $text = $scored['preds'] > 0
         ? 'Alterações salvas. Pontos de ' . plural($scored['preds'], 'palpite', 'palpites') . ' recalculados.'
         : 'Alterações salvas.';
+    if ($fetching) {
+        $text .= ' Buscando a tabela completa; pode levar alguns minutos.';
+    }
     config_ok('ligas', $text, $back);
+}
+
+if ($action === 'rounds') {
+    $roundMode = (string) ($_POST['round_mode'] ?? '');
+    $deadlineMode = (string) ($_POST['deadline_mode'] ?? '');
+    if (!in_array($roundMode, ['rodada', 'duas', 'livre'], true) || !in_array($deadlineMode, ['jogo', 'rodada'], true)) {
+        config_fail('rodadas', ['round_mode' => 'Escolha uma opção em cada grupo.'], [], $back);
+    }
+    // Os pontos não mudam, então não precisa recalcular.
+    $pdo->prepare('UPDATE bolao_groups SET round_mode = ?, deadline_mode = ? WHERE id = ?')
+        ->execute([$roundMode, $deadlineMode, $groupId]);
+    config_ok('rodadas', 'Alterações salvas.', $back);
 }
 
 if ($action === 'points') {

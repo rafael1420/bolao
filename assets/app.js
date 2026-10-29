@@ -412,6 +412,52 @@
         strip.scrollLeft = Math.max(0, target);
     }
 
+    /* Seletor de ligas: busca por nome e contadores (por país e no total). Sem JS, a lista funciona igual. */
+    function plain(text) {
+        var t = (text || '').toLowerCase();
+        return t.normalize ? t.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : t;
+    }
+    function setupLeaguePicker() {
+        var pickers = document.querySelectorAll('[data-league-picker]');
+        for (var i = 0; i < pickers.length; i++) {
+            (function (picker) {
+                var max = parseInt(picker.getAttribute('data-max'), 10) || 6;
+                var total = picker.querySelector('[data-league-count]');
+                var wrap = picker.querySelector('[data-league-search-wrap]');
+                var input = picker.querySelector('[data-league-search]');
+                var groups = picker.querySelectorAll('[data-country]');
+                var count = function () {
+                    var n = picker.querySelectorAll('input[type="checkbox"]:checked').length;
+                    if (total) {
+                        total.textContent = n + (n === 1 ? ' selecionado' : ' selecionados');
+                        total.classList.toggle('is-over', n > max);
+                    }
+                    for (var g = 0; g < groups.length; g++) {
+                        var c = groups[g].querySelectorAll('input[type="checkbox"]:checked').length;
+                        var label = groups[g].querySelector('[data-country-count]');
+                        if (label) { label.textContent = c ? c + (c === 1 ? ' selecionado' : ' selecionados') : ''; }
+                    }
+                };
+                picker.addEventListener('change', count);
+                if (wrap && input) {
+                    wrap.hidden = false;
+                    input.addEventListener('input', function () {
+                        var q = plain(input.value.trim());
+                        var cards = picker.querySelectorAll('[data-search]');
+                        for (var k = 0; k < cards.length; k++) {
+                            cards[k].hidden = q !== '' && plain(cards[k].getAttribute('data-search')).indexOf(q) === -1;
+                        }
+                        for (var g = 0; g < groups.length; g++) {
+                            var any = groups[g].querySelector('[data-search]:not([hidden])');
+                            groups[g].hidden = !any;
+                            if (q !== '' && any && groups[g].tagName === 'DETAILS') { groups[g].open = true; }
+                        }
+                    });
+                }
+            })(pickers[i]);
+        }
+    }
+
     function init() {
         setupTheme();
         setupAutosubmit();
@@ -424,6 +470,7 @@
         setupPointsExample();
         setupBusy();
         setupCurrentRound();
+        setupLeaguePicker();
         tick();
         setInterval(function () {
             if (document.visibilityState !== 'hidden') { tick(); }

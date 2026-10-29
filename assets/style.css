@@ -614,6 +614,51 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .fieldset.is-invalid .check { border-color: var(--danger-line); }
 .fieldset .field-error { margin-bottom: var(--sp-2); }
 
+/* Seletor de ligas por país */
+.league-picker { display: grid; gap: var(--sp-3); }
+.league-count strong.is-over { color: var(--danger-text); }
+.country-block, .country-more {
+    min-width: 0; margin: 0; padding: var(--sp-3);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.country-more > .country-block { margin-top: var(--sp-3); background: var(--surface); }
+.country-head {
+    display: flex; align-items: center; gap: var(--sp-2);
+    padding: 0; font-weight: 700; color: var(--ink); cursor: default;
+}
+details > .country-head { cursor: pointer; list-style: none; min-height: 32px; }
+details > .country-head::-webkit-details-marker { display: none; }
+details > .country-head::after { content: "▾"; margin-left: auto; color: var(--ink-faint); transition: transform var(--dur-fast); }
+details[open] > .country-head::after { transform: rotate(180deg); }
+.country-block.is-static > .country-head { float: left; width: 100%; margin-bottom: var(--sp-2); }
+.country-block.is-static > .country-head + * { clear: both; }
+.country-count { font-size: .8rem; font-weight: 600; color: var(--accent-text); }
+details > .country-head .country-count { margin-left: var(--sp-1); }
+.league-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-2);
+    min-width: 0; margin: var(--sp-2) 0 0; padding: 0; border: 0;
+}
+.check-card { position: relative; flex-wrap: wrap; row-gap: 2px; padding: 8px 12px; }
+.check-card .check-label { flex: 1 1 0; min-width: 0; order: 2; }
+.check-card .league-logo { order: 1; flex: none; width: 24px; height: 24px; object-fit: contain; }
+.check-card input { order: 0; }
+.check-card .check-meta { order: 3; flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--sp-1); padding-left: 34px; font-weight: 500; }
+.check-card[hidden], .country-block[hidden] { display: none; }
+.tag.is-off { color: var(--warning-text, var(--ink-soft)); background: var(--warning-soft, var(--surface-3)); }
+.radio-card { flex-wrap: wrap; row-gap: 2px; }
+.radio-card + .radio-card { margin-top: var(--sp-2); }
+.radio-card input[type="radio"] { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.radio-card .check-label { flex: 1 1 0; }
+.radio-card .check-meta { flex-basis: 100%; padding-left: 32px; font-weight: 400; }
+.radio-card:has(input:checked) { border-color: var(--accent-line); background: var(--accent-soft); }
+.flag { flex: none; width: 24px; height: 16px; border-radius: 2px; vertical-align: -3px; }
+.league-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); margin: 0; }
+.league-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 6px;
+    font-size: .85rem; font-weight: 600; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+}
+
 .grid2, .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 .grid2 .field, .grid-2 .field { margin-bottom: 0; }
 .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--sp-3); }

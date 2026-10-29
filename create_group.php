@@ -1,15 +1,15 @@
 <?php
 require_once __DIR__ . '/includes/app.php';
+require_once __DIR__ . '/includes/group_views.php';
 
 $user = require_login();
-$leagues = db()->query('SELECT id, name FROM leagues ORDER BY name')->fetchAll();
-$validLeagueIds = array_map('intval', array_column($leagues, 'id'));
+$validLeagueIds = league_valid_ids();
 
 $errors = [];   // campo => mensagem
 $summary = [];
 $form = [
     'name' => '',
-    'leagues' => count($leagues) === 1 ? [(int) $leagues[0]['id']] : [],
+    'leagues' => [],
     'exact' => 5,
     'winner' => 3,
     'diff' => 1,
@@ -20,10 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $name = trim($_POST['name'] ?? '');
     $password = (string) ($_POST['password'] ?? '');
-    $selected = array_values(array_intersect(
+    $selected = array_values(array_unique(array_intersect(
         array_map('intval', (array) ($_POST['leagues'] ?? [])),
         $validLeagueIds
-    ));
+    )));
     $form = [
         'name' => $name,
         'leagues' => $selected,
@@ -37,6 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if (!$selected) {
         $errors['leagues'] = 'Marque pelo menos uma liga para o bolão.';
+    } elseif (count($selected) > MAX_GROUP_LEAGUES) {
+        $errors['leagues'] = 'Escolha no máximo ' . MAX_GROUP_LEAGUES . ' ligas.';
     }
     foreach (['exact_points' => $form['exact'], 'winner_points' => $form['winner'], 'goal_diff_points' => $form['diff']] as $field => $points) {
         if ($points < 0 || $points > 20) {
@@ -77,6 +79,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
+        if (fetch_new_leagues($selected)) {
+            flash_set('notice', 'Buscando a tabela completa; pode levar alguns minutos.');
+        }
         flash_set('welcome', true);
         redirect('group.php?id=' . $groupId);
     }
@@ -117,10 +122,7 @@ page_start('Novo bolão', $user, 'wrap', 'inicio');
         <?php if (isset($errors['leagues'])): ?>
             <p class="field-error"><?= e($errors['leagues']) ?></p>
         <?php endif; ?>
-        <?php foreach ($leagues as $league): ?>
-            <?php check_option('leagues[]', (string) $league['id'], $league['name'],
-                in_array((int) $league['id'], $form['leagues'], true), 'liga-' . $league['id']); ?>
-        <?php endforeach; ?>
+        <?php render_league_picker($form['leagues'], 'novo'); ?>
     </fieldset>
 
     <fieldset class="fieldset<?= isset($errors['points']) ? ' is-invalid' : '' ?>">

@@ -25,7 +25,7 @@ if (!isset($tabs[$tab])) {
 // Ligas e nomes
 $leagueIds = group_league_ids($groupId);
 $in = placeholders($leagueIds);
-$stmt = db()->prepare("SELECT id, name FROM leagues WHERE id IN ($in) ORDER BY name");
+$stmt = db()->prepare("SELECT id, name, short_name, country, kind, logo_url FROM leagues WHERE id IN ($in) ORDER BY sort_order, name");
 $stmt->execute($leagueIds);
 $leagues = $stmt->fetchAll();
 $leagueNames = array_column($leagues, 'name');

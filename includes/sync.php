@@ -499,6 +499,33 @@ function sync_league_now(int $leagueId): bool
     }
 }
 
+/**
+ * Ligas recém-escolhidas num bolão que nunca foram sincronizadas: busca já a página padrão de cada uma
+ * (os jogos do momento aparecem na hora). Devolve true se alguma ainda vai receber a tabela completa.
+ */
+function fetch_new_leagues(array $leagueIds): bool
+{
+    $leagueIds = array_values(array_map('intval', $leagueIds));
+    if (!$leagueIds) {
+        return false;
+    }
+    $stmt = db()->prepare(
+        'SELECT id FROM leagues WHERE id IN (' . placeholders($leagueIds) . ')
+           AND synced_quick_at = 0 AND external_id IS NOT NULL AND external_id <> \'\''
+    );
+    $stmt->execute($leagueIds);
+    $fresh = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    @set_time_limit(60);
+    foreach ($fresh as $id) {
+        try {
+            sync_league_now($id);
+        } catch (Throwable $e) {
+            error_log('bolao sync liga ' . $id . ': ' . $e->getMessage());
+        }
+    }
+    return (bool) $fresh;
+}
+
 /** Início e fim da temporada atual da liga, pela página padrão da ESPN. [início, fim] em timestamp. */
 function sync_season_window(array $board): array
 {

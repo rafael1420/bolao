@@ -407,11 +407,26 @@ function field(string $name, string $label, array $o = []): void
     <?php
 }
 
-/** Caixa de seleção com rótulo ao lado (ligas). */
-function check_option(string $name, string $value, string $label, bool $checked, string $id): void
+/**
+ * Caixa de seleção com rótulo ao lado (ligas). $extraHtml (já escapado) vai depois do rótulo:
+ * escudo e etiquetas no seletor de ligas. $attrs: atributos extras do <label> (já escapados).
+ */
+function check_option(string $name, string $value, string $label, bool $checked, string $id, string $extraHtml = '', string $attrs = ''): void
 {
-    echo '<label class="check" for="' . e($id) . '">'
+    echo '<label class="check' . ($extraHtml !== '' ? ' check-card' : '') . '" for="' . e($id) . '"' . $attrs . '>'
         . '<input type="checkbox" id="' . e($id) . '" name="' . e($name) . '" value="' . e($value) . '"'
         . ($checked ? ' checked' : '') . '>'
-        . '<span>' . e($label) . '</span></label>';
+        . '<span class="check-label">' . e($label) . '</span>' . $extraHtml . '</label>';
+}
+
+/**
+ * Endereço de uma imagem da ESPN já reduzida pelo próprio CDN (64 px pesa ~6 KB; a original, ~60 KB).
+ * Só aceita imagens de a.espncdn.com; qualquer outra coisa devolve null (fica o escudo desenhado).
+ */
+function espn_img(?string $url, int $size): ?string
+{
+    if ($url === null || !preg_match('#^https://a\.espncdn\.com(/i/[A-Za-z0-9/_.-]+\.png)$#', $url, $m)) {
+        return null;
+    }
+    return 'https://a.espncdn.com/combiner/i?img=' . $m[1] . '&w=' . $size . '&h=' . $size;
 }

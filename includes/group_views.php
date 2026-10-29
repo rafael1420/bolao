@@ -48,7 +48,7 @@ function group_header(array $c): void
             <?= avatar($group['name'], 'avatar-group avatar-lg') ?>
             <div class="group-title">
                 <h1 class="h-page"><?= e($group['name']) ?></h1>
-                <p class="meta"><?= e(implode(', ', $c['leagueNames'])) ?></p>
+                <p class="league-chips"><?php foreach ($c['leagues'] as $league) { echo league_chip($league); } ?></p>
                 <p class="head-chips">
                     <span class="pill is-muted"><?= icon('users') ?><?= e(plural($c['memberCount'], 'participante', 'participantes')) ?></span>
                     <?php if ($me): ?>
@@ -586,7 +586,6 @@ function render_configurar(array $c): void
     $group = $c['group'];
     $gid = $c['groupId'];
     $flash = $c['configFlash'];
-    $leagues = db()->query('SELECT id, name FROM leagues ORDER BY name')->fetchAll();
     $stmt = db()->prepare('SELECT league_id FROM group_leagues WHERE group_id = ?');
     $stmt->execute([$gid]);
     $currentLeagues = array_map('intval', array_column($stmt->fetchAll(), 'league_id'));
@@ -656,15 +655,23 @@ function render_configurar(array $c): void
             <?= csrf_field() ?>
             <input type="hidden" name="group_id" value="<?= (int) $gid ?>">
             <input type="hidden" name="action" value="leagues">
-            <fieldset class="fieldset">
-                <legend>Ligas do bolão</legend>
-                <?php foreach ($leagues as $league): ?>
-                    <?php check_option('leagues[]', (string) $league['id'], $league['name'],
-                        in_array((int) $league['id'], $currentLeagues, true), 'cfg-liga-' . $league['id']); ?>
-                <?php endforeach; ?>
-            </fieldset>
+            <?php render_league_picker(array_map('intval', $currentLeagues), 'cfg'); ?>
             <p class="help"><?= e(recalc_warning($c['scored'])) ?></p>
             <div class="actions"><button type="submit" class="btn primary" data-busy="Salvando…">Salvar ligas</button></div>
+        </form>
+    </section>
+
+    <section class="block" id="bloco-rodadas">
+        <h3><span class="block-icon"><?= icon('calendar') ?></span>Rodadas</h3>
+        <?php config_block_notice($flash, 'rodadas'); ?>
+        <form method="post" action="<?= e($action) ?>" class="stack" data-dirty-guard>
+            <?= csrf_field() ?>
+            <input type="hidden" name="group_id" value="<?= (int) $gid ?>">
+            <input type="hidden" name="action" value="rounds">
+            <?php render_mode_radios('round_mode', 'Quais rodadas aceitam palpite', ROUND_MODES, (string) ($group['round_mode'] ?? 'rodada')); ?>
+            <?php render_mode_radios('deadline_mode', 'Prazo dos palpites', DEADLINE_MODES, (string) ($group['deadline_mode'] ?? 'jogo')); ?>
+            <p class="help">Os pontos não mudam. Palpites já feitos continuam guardados.</p>
+            <div class="actions"><button type="submit" class="btn primary" data-busy="Salvando…">Salvar rodadas</button></div>
         </form>
     </section>
 
@@ -735,6 +742,23 @@ function render_configurar(array $c): void
     <?php
 }
 
+/** Grupo de opções (rádio) com nome e explicação de cada uma. */
+function render_mode_radios(string $name, string $legend, array $options, string $current): void
+{
+    ?>
+    <fieldset class="fieldset">
+        <legend><?= e($legend) ?></legend>
+        <?php foreach ($options as $value => [$label, $help]): $id = 'f-' . $name . '-' . $value; ?>
+            <label class="check radio-card" for="<?= e($id) ?>">
+                <input type="radio" id="<?= e($id) ?>" name="<?= e($name) ?>" value="<?= e($value) ?>"<?= $value === $current ? ' checked' : '' ?>>
+                <span class="check-label"><?= e($label) ?></span>
+                <span class="check-meta muted-small"><?= e($help) ?></span>
+            </label>
+        <?php endforeach; ?>
+    </fieldset>
+    <?php
+}
+
 /** Aba Regras (membros): pontuação e ligas, em leitura, e sair do bolão. */
 function render_regras(array $c): void
 {
@@ -755,8 +779,20 @@ function render_regras(array $c): void
 
     <section class="block">
         <h3><span class="block-icon"><?= icon('trophy') ?></span>Ligas</h3>
-        <p><?= e(implode(', ', $c['leagueNames'])) ?></p>
-        <p class="help">Dá para palpitar até o início de cada jogo.</p>
+        <p class="league-chips"><?php foreach ($c['leagues'] as $league) { echo league_chip($league); } ?></p>
+    </section>
+
+    <section class="block">
+        <h3><span class="block-icon"><?= icon('calendar') ?></span>Rodadas</h3>
+        <?php
+        $rm = ROUND_MODES[$group['round_mode'] ?? 'rodada'] ?? ROUND_MODES['rodada'];
+        $dm = DEADLINE_MODES[$group['deadline_mode'] ?? 'jogo'] ?? DEADLINE_MODES['jogo'];
+        ?>
+        <dl class="rules">
+            <div><dt>Palpites</dt><dd><?= e($rm[0]) ?></dd></div>
+            <div><dt>Prazo</dt><dd><?= e($dm[0]) ?></dd></div>
+        </dl>
+        <p class="help"><?= e($rm[1] . ' ' . $dm[1]) ?></p>
     </section>
 
     <section class="block danger-zone">
@@ -897,6 +933,116 @@ function render_transfer_block(array $c, string $action): void
         <?php endif; ?>
     </section>
     <?php
+}
+
+/**
+ * Seletor de ligas agrupado por país (criar bolão e Configurar). Brasil, América do Sul e Europa
+ * ficam abertos; os outros países em destaque se abrem num clique (ou já abertos, se têm liga marcada);
+ * os demais ficam em "Mais países". A busca filtra os cartões (só com JavaScript).
+ */
+function render_league_picker(array $selected, string $idPrefix): void
+{
+    $rows = league_picker_rows($selected);
+    $byCountry = [];
+    foreach ($rows as $row) {
+        $byCountry[$row['country']][] = $row;
+    }
+    $featured = $others = [];
+    foreach ($byCountry as $code => $list) {
+        if (COUNTRIES[$code][2] ?? false) {
+            $featured[$code] = $list;
+        } else {
+            $others[$code] = $list;
+        }
+    }
+    $othersSelected = 0;
+    foreach ($others as $list) {
+        foreach ($list as $row) {
+            $othersSelected += in_array($row['id'], $selected, true) ? 1 : 0;
+        }
+    }
+    ?>
+    <div class="league-picker" data-league-picker data-max="<?= (int) MAX_GROUP_LEAGUES ?>">
+        <p class="help league-count" aria-live="polite">Escolha até <?= (int) MAX_GROUP_LEAGUES ?> campeonatos. <strong data-league-count><?= e(plural(count($selected), 'selecionado', 'selecionados')) ?></strong></p>
+        <div class="field league-search" hidden data-league-search-wrap>
+            <label for="<?= e($idPrefix) ?>-busca">Buscar campeonato</label>
+            <div class="control"><input type="search" id="<?= e($idPrefix) ?>-busca" autocomplete="off" placeholder="Ex.: Premier League, Copa do Brasil" data-league-search></div>
+        </div>
+        <?php foreach ($featured as $code => $list) {
+            render_league_country($code, $list, $selected, $idPrefix, !in_array($code, ['BRA', 'CONMEBOL', 'UEFA'], true));
+        } ?>
+        <?php if ($others): ?>
+            <details class="country-more" data-country<?= $othersSelected ? ' open' : '' ?>>
+                <summary class="country-head"><?= icon('plus-circle') ?><span class="country-name">Mais países</span><span class="country-count" data-country-count><?= $othersSelected ? e(plural($othersSelected, 'selecionado', 'selecionados')) : '' ?></span></summary>
+                <?php foreach ($others as $code => $list) {
+                    render_league_country($code, $list, $selected, $idPrefix, false);
+                } ?>
+            </details>
+        <?php endif; ?>
+    </div>
+    <?php
+}
+
+/** Um país do seletor de ligas: bandeira, nome, contador e os cartões das ligas. */
+function render_league_country(string $code, array $rows, array $selected, string $idPrefix, bool $collapsible): void
+{
+    $count = 0;
+    foreach ($rows as $row) {
+        $count += in_array($row['id'], $selected, true) ? 1 : 0;
+    }
+    $head = country_flag_svg($code) . '<span class="country-name">' . e(country_name($code)) . '</span>'
+        . '<span class="country-count" data-country-count>' . ($count ? e(plural($count, 'selecionado', 'selecionados')) : '') . '</span>';
+    $legendId = $idPrefix . '-pais-' . strtolower($code);
+    if ($collapsible): ?>
+        <details class="country-block" data-country<?= $count ? ' open' : '' ?>>
+            <summary class="country-head"><?= $head ?></summary>
+            <fieldset class="league-grid" aria-labelledby="<?= e($legendId) ?>">
+                <legend class="visually-hidden" id="<?= e($legendId) ?>"><?= e(country_name($code)) ?></legend>
+                <?php render_league_cards($rows, $selected, $idPrefix); ?>
+            </fieldset>
+        </details>
+    <?php else: ?>
+        <fieldset class="country-block is-static" data-country>
+            <legend class="country-head"><?= $head ?></legend>
+            <div class="league-grid"><?php render_league_cards($rows, $selected, $idPrefix); ?></div>
+        </fieldset>
+    <?php endif;
+}
+
+function render_league_cards(array $rows, array $selected, string $idPrefix): void
+{
+    foreach ($rows as $row) {
+        $logo = espn_img($row['logo_url'] ?? null, 48);
+        $extra = '<span class="check-meta">'
+            . '<span class="tag">' . ($row['kind'] === 'copa' ? 'Copa' : 'Liga') . '</span>'
+            . ($row['season_label'] ? '<span class="muted-small">' . e($row['season_label']) . '</span>' : '')
+            . ($row['off_season'] ? '<span class="tag is-off">fora de temporada</span>' : '')
+            . '</span>';
+        if ($logo) {
+            $extra .= '<img class="league-logo" src="' . e($logo) . '" width="24" height="24" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">';
+        }
+        $search = mb_strtolower($row['name'] . ' ' . ($row['short_name'] ?? '') . ' ' . country_name($row['country']), 'UTF-8');
+        check_option('leagues[]', (string) $row['id'], $row['name'], in_array($row['id'], $selected, true),
+            $idPrefix . '-liga-' . $row['id'], $extra, ' data-search="' . e($search) . '"');
+    }
+}
+
+/** Nome dos modos de rodada e de prazo, para Configurar e Regras. */
+const ROUND_MODES = [
+    'rodada' => ['Rodada atual', 'Só a rodada da vez aceita palpite. A próxima abre quando todos os jogos da atual começarem, ou 48 h antes do primeiro jogo dela.'],
+    'duas'   => ['Atual e próxima', 'Dá para palpitar na rodada da vez e na seguinte.'],
+    'livre'  => ['Livre', 'Qualquer jogo já marcado aceita palpite até começar.'],
+];
+const DEADLINE_MODES = [
+    'jogo'   => ['Até cada jogo', 'Cada palpite pode mudar até o seu jogo começar.'],
+    'rodada' => ['Até o 1º jogo da rodada', 'Quando a rodada começa, todos os palpites dela fecham.'],
+];
+
+/** Liga em forma de etiqueta: bandeira e nome curto (cabeçalho do bolão, Regras). */
+function league_chip(array $league): string
+{
+    return '<span class="league-chip">' . country_flag_svg((string) ($league['country'] ?? 'OUT'))
+        . '<span>' . e(($league['short_name'] ?? '') ?: $league['name']) . '</span></span>';
 }
 
 /** Abas de campeonato da aba Palpites (só quando o bolão tem mais de uma liga). */
