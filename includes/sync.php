@@ -1,21 +1,28 @@
 <?php
 // Sincronização automática de jogos e placares com a API pública da ESPN (gratuita, sem chave).
-// Roda sozinha depois que a página é entregue ao visitante (a cada 5 min, ou 1 min com jogo ao vivo),
-// e o admin pode forçar pelo botão "Sincronizar agora".
+// Roda sozinha depois que a página é entregue ao visitante (no máximo uma vez por minuto) e cuida
+// só das ligas que estão em algum bolão, cada uma no seu ritmo (ver sync_plan). O admin pode forçar
+// pelo botão "Sincronizar agora".
 
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
 
-const SYNC_FULL_EVERY = 6 * 3600;  // tabela completa, para pegar jogos novos e remarcados
-const SYNC_IDLE_EVERY = 5 * 60;
-const SYNC_LIVE_EVERY = 60;
+const SYNC_TICK = 60;                 // intervalo mínimo entre duas sincronizações automáticas
+const SYNC_FULL_EVERY = 6 * 3600;     // tabela de cada liga (jogos novos e remarcados)
+const SYNC_IDLE_EVERY = 5 * 60;       // jogos do momento de cada liga
+const SYNC_LIVE_EVERY = 60;           // ... quando a liga tem jogo ao vivo
+const SYNC_FULL_PER_RUN = 2;          // ligas com tabela completa por execução (o trabalho fica espalhado)
+const SYNC_BUDGET = 60;               // consultas à ESPN por execução automática
+const SYNC_ADMIN_BUDGET = 250;        // consultas no botão "Sincronizar agora"
+const SYNC_WINDOW_BEFORE = 7 * 86400; // a tabela completa vai de 7 dias atrás...
+const SYNC_WINDOW_AFTER = 35 * 86400; // ... até 35 dias à frente
+const SYNC_BACKFILL_DAYS = 20;        // dias buscados por vez até cobrir o começo da temporada
 const SYNC_SCHEMA = '3';
 
-// A ESPN não informa a rodada do Brasileirão; o TheSportsDB (chave pública de teste) informa.
-// Ele bloqueia quem faz muitas consultas seguidas, então cada sincronização busca poucas rodadas,
+// A ESPN não informa a rodada das ligas; o TheSportsDB (chave pública de teste) informa, para as ligas
+// com 'tsdb' no catálogo (includes/leagues.php). Ele bloqueia quem faz muitas consultas seguidas, então
+// cada sincronização busca poucas rodadas (no máximo uma leva a cada 10 minutos, somando todas as ligas),
 // e cada rodada só é buscada até vir completa (o confronto mandante × visitante não muda de rodada).
-const TSDB_ROUND_URL = 'https://www.thesportsdb.com/api/v1/json/123/eventsround.php?id=4351&s=%d&r=%d';
-const TSDB_ROUNDS = 38;
-const TSDB_GAMES_PER_ROUND = 10;
+const TSDB_ROUND_URL = 'https://www.thesportsdb.com/api/v1/json/123/eventsround.php?id=%d&s=%s&r=%d';
 const TSDB_PER_RUN = 3;
 
 /** Times com nomes diferentes nas duas fontes (já sem acento e espaço, ver team_key). */
@@ -27,28 +34,38 @@ const TEAM_ALIASES = [
     'redbullbragantino'   => 'bragantino',
 ];
 
-/** Nomes das fases das copas, como a ESPN escreve no calendário. */
+/** Nomes das fases das copas, como a ESPN escreve no calendário. Outros "3rd Round" viram "3ª fase". */
 const CUP_STAGES = [
-    'First Round'   => '1ª fase',
-    'Second Round'  => '2ª fase',
-    'Third Round'   => '3ª fase',
-    'Fourth Round'  => '4ª fase',
-    'Fifth Round'   => '5ª fase',
-    'First Stage'   => '1ª fase',
-    'Second Stage'  => '2ª fase',
-    'Third Stage'   => '3ª fase',
-    'Group'         => 'Fase de grupos',
-    'Group Stage'   => 'Fase de grupos',
-    'Rd of 32'      => '16 avos de final',
-    'Rd of 16'      => 'Oitavas de final',
-    'Quarterfinals' => 'Quartas de final',
-    'Semifinals'    => 'Semifinal',
-    'Final'         => 'Final',
+    'First Round'             => '1ª fase',
+    'Second Round'            => '2ª fase',
+    'Third Round'             => '3ª fase',
+    'Fourth Round'            => '4ª fase',
+    'Fifth Round'             => '5ª fase',
+    'First Stage'             => '1ª fase',
+    'Second Stage'            => '2ª fase',
+    'Third Stage'             => '3ª fase',
+    'Preliminary Round'       => 'Fase preliminar',
+    'Qualifying'              => 'Fase preliminar',
+    'Group'                   => 'Fase de grupos',
+    'Group Stage'             => 'Fase de grupos',
+    'League Phase'            => 'Fase de liga',
+    'League Stage'            => 'Fase de liga',
+    'Knockout Round Playoffs' => 'Playoffs',
+    'Playoff Round'           => 'Playoffs',
+    'Play-off Round'          => 'Playoffs',
+    'Rd of 32'                => '16 avos de final',
+    'Round of 32'             => '16 avos de final',
+    'Rd of 16'                => 'Oitavas de final',
+    'Round of 16'             => 'Oitavas de final',
+    'Quarterfinals'           => 'Quartas de final',
+    'Semifinals'              => 'Semifinal',
+    'Final'                   => 'Final',
+    'Finals'                  => 'Final',
 ];
 
 /**
  * Agenda a sincronização para depois que a resposta já foi enviada, assim ninguém espera por ela.
- * Sem como liberar a resposta antes, só faz a sincronização rápida (poucas requisições).
+ * Sem como liberar a resposta antes, só faz a parte rápida (poucas consultas).
  */
 function sync_schedule(): void
 {
@@ -72,12 +89,8 @@ function sync_schedule(): void
         @set_time_limit(120);
 
         try {
-            $mode = sync_due();
-            if ($mode === 'full' && !$detached) {
-                $mode = 'quick';
-            }
-            if ($mode !== null) {
-                sync_run($mode);
+            if (sync_due()) {
+                sync_run($detached ? 'auto' : 'quick');
             }
         } catch (Throwable $e) {
             error_log('bolao sync: ' . $e->getMessage());
@@ -85,20 +98,10 @@ function sync_schedule(): void
     });
 }
 
-/** 'full', 'quick' ou null, conforme o tempo desde a última sincronização. */
-function sync_due(): ?string
+/** Já passou um minuto desde a última sincronização? O que cada liga precisa é decidido em sync_plan(). */
+function sync_due(): bool
 {
-    $state = sync_state();
-    $now = time();
-
-    if ($now - (int) ($state['last_full'] ?? 0) >= SYNC_FULL_EVERY) {
-        return 'full';
-    }
-    $every = !empty($state['live']) ? SYNC_LIVE_EVERY : SYNC_IDLE_EVERY;
-    if ($now - (int) ($state['last_quick'] ?? 0) >= $every) {
-        return 'quick';
-    }
-    return null;
+    return time() - (int) (sync_state()['last_tick'] ?? 0) >= SYNC_TICK;
 }
 
 function sync_state(): array
@@ -254,8 +257,9 @@ function sync_leagues(): array
 }
 
 /**
- * Busca e grava jogos. 'full' percorre a temporada; 'quick' só ontem, hoje, amanhã
- * e os dias de jogos que já começaram e ainda não têm placar.
+ * Busca e grava jogos das ligas em uso.
+ * 'auto': cada liga no seu ritmo (rápida, completa e o começo da temporada), até SYNC_BUDGET consultas;
+ * 'quick': só a parte rápida; 'full' (botão do admin): tabela completa de todas as ligas em uso.
  */
 function sync_run(string $mode): array
 {
@@ -267,86 +271,129 @@ function sync_run(string $mode): array
     try {
         sync_migrate();
         $now = time();
-        sync_set_state($mode === 'full'
-            ? ['last_full' => $now, 'last_quick' => $now]
-            : ['last_quick' => $now]);
+        $state = ['last_tick' => $now, 'last_quick' => $now];
+        if ($mode === 'full') {
+            $state['last_full'] = $now;
+        }
+        sync_set_state($state);
 
         $leagues = sync_leagues();
-        $leagueIds = array_map(fn ($l) => $l['id'], $leagues);
-        $stats = ['mode' => $mode, 'events' => 0, 'new' => 0, 'results' => 0, 'failed_requests' => 0];
+        $plan = sync_plan($leagues, $mode, $now);
+        $budget = $mode === 'full' ? SYNC_ADMIN_BUDGET : SYNC_BUDGET;
+        $stats = ['mode' => $mode, 'leagues' => count($plan), 'requests' => 0, 'events' => 0, 'new' => 0,
+            'results' => 0, 'failed_requests' => 0];
+        if (!$plan) {
+            return $stats;
+        }
 
-        // 1) Página padrão de cada liga: traz o calendário (dias ou fases) e os jogos do momento.
+        // 1) Página padrão de cada liga: traz o calendário (dias ou fases), a temporada e os jogos do momento.
         $urls = [];
-        foreach ($leagues as $code => $league) {
-            $urls[$code] = ESPN_BASE . $league['slug'] . '/scoreboard';
+        foreach ($plan as $code => $p) {
+            $urls[$code] = ESPN_BASE . $leagues[$code]['slug'] . '/scoreboard';
         }
         $boards = espn_fetch_many($urls);
-        foreach ($boards as $code => $board) {
-            if ($board !== null) {
-                sync_league_info($leagues[$code]['id'], $board);
-            }
-        }
+        $requests = count($urls);
 
-        // 2) Dias a buscar em cada liga.
+        // 2) Dias a buscar, por prioridade: jogos sem placar, a janela da tabela completa, o começo da temporada.
         $pending = sync_pending_days($now);
         $dayUrls = [];
-        foreach ($leagues as $code => $league) {
-            $days = [espn_day($now - 86400), espn_day($now), espn_day($now + 86400)];
-            $days = array_merge($days, $pending[$leagueIds[$code]] ?? []);
-
-            if ($mode === 'full') {
-                if ($league['cup']) {
-                    for ($t = $now - 10 * 86400; $t <= $now + 60 * 86400; $t += 86400) {
-                        $days[] = espn_day($t);
-                    }
-                } else {
-                    foreach ($boards[$code]['leagues'][0]['calendar'] ?? [] as $day) {
-                        if (is_string($day)) {
-                            $days[] = espn_day(strtotime($day));
-                        }
-                    }
+        $add = function (string $code, string $day) use (&$dayUrls, &$requests, $budget, $leagues): bool {
+            $key = $code . '|' . $day;
+            if (isset($dayUrls[$key])) {
+                return true;
+            }
+            if ($requests >= $budget) {
+                return false;
+            }
+            $dayUrls[$key] = ESPN_BASE . $leagues[$code]['slug'] . '/scoreboard?dates=' . $day;
+            $requests++;
+            return true;
+        };
+        foreach ($plan as $code => $p) {
+            if ($boards[$code] !== null) {
+                foreach (array_unique($pending[$leagues[$code]['id']] ?? []) as $day) {
+                    $add($code, $day);
                 }
             }
-
-            foreach (array_unique($days) as $day) {
-                $dayUrls[$code . '|' . $day] = ESPN_BASE . $league['slug'] . '/scoreboard?dates=' . $day;
+        }
+        foreach ($plan as $code => $p) {
+            if ($p['full'] && $boards[$code] !== null) {
+                foreach (sync_window_days($leagues[$code], $boards[$code], $now) as $day) {
+                    $add($code, $day);
+                }
             }
         }
-        $dayBoards = espn_fetch_many($dayUrls);
+        $backfill = []; // código => [dias buscados, dia até onde fica coberto]
+        foreach ($plan as $code => $p) {
+            if (!$p['backfill'] || $boards[$code] === null) {
+                continue;
+            }
+            [$days, $doneDay] = sync_backfill_days($leagues[$code], $boards[$code], $now);
+            $taken = [];
+            foreach (array_slice($days, 0, SYNC_BACKFILL_DAYS) as $day) {
+                if (!$add($code, $day)) {
+                    break;
+                }
+                $taken[] = $day;
+            }
+            // Coberto até o último dia buscado; se buscou tudo o que faltava, até o início da janela.
+            $covered = count($taken) === count($days) ? $doneDay : end($taken);
+            if ($covered) {
+                $backfill[$code] = [$taken, $covered];
+            }
+        }
+        $dayBoards = $dayUrls ? espn_fetch_many($dayUrls) : [];
+        $stats['requests'] = $requests;
 
         // 3) Junta os jogos de cada liga, sem repetir.
         $events = [];
+        $failedDays = [];
         foreach ($boards as $code => $board) {
             foreach ($board['events'] ?? [] as $event) {
                 $events[$code][$event['id']] = $event;
             }
         }
         foreach ($dayBoards as $key => $board) {
+            [$code, $day] = explode('|', $key);
             if ($board === null) {
                 $stats['failed_requests']++;
+                $failedDays[$code][$day] = true;
                 continue;
             }
-            $code = explode('|', $key)[0];
             foreach ($board['events'] ?? [] as $event) {
                 $events[$code][$event['id']] = $event;
             }
         }
-        $stats['failed_requests'] += count(array_filter($boards, fn ($b) => $b === null));
 
-        foreach ($leagues as $code => $league) {
-            $stages = $league['cup'] ? ($boards[$code]['leagues'][0]['calendar'][0]['entries'] ?? []) : [];
-            $saved = sync_save_events($leagueIds[$code], array_values($events[$code] ?? []), $stages);
+        // 4) Grava, numera as rodadas e anota o controle de cada liga.
+        $mark = $pdo->prepare(
+            'UPDATE leagues SET synced_quick_at = ?, synced_full_at = ?, sync_failures = ?, backfill_day = ? WHERE id = ?'
+        );
+        foreach ($plan as $code => $p) {
+            $league = $leagues[$code];
+            $board = $boards[$code];
+            if ($board === null) {
+                $stats['failed_requests']++;
+                $mark->execute([$now, $league['synced_full_at'], min(20, (int) $league['sync_failures'] + 1), $league['backfill_day'], $league['id']]);
+                continue;
+            }
+            sync_league_info($league['id'], $board);
+            $stages = $league['cup'] ? ($board['leagues'][0]['calendar'][0]['entries'] ?? []) : [];
+            $saved = sync_save_events($league['id'], array_values($events[$code] ?? []), $stages);
             $stats['events'] += $saved['events'];
             $stats['new'] += $saved['new'];
             $stats['results'] += $saved['results'];
-            if (!$league['cup']) {
-                $season = (int) ($boards[$code]['leagues'][0]['season']['year'] ?? date('Y'));
-                sync_official_rounds($leagueIds[$code], $season, TSDB_PER_RUN);
-                sync_number_rounds($leagueIds[$code], $season);
+            sync_number_league($league, $board);
+
+            $backfillDay = $league['backfill_day'];
+            if (isset($backfill[$code]) && !array_intersect_key($failedDays[$code] ?? [], array_flip($backfill[$code][0]))) {
+                $backfillDay = $backfill[$code][1];
             }
+            $mark->execute([$now, $p['full'] ? $now : $league['synced_full_at'], 0, $backfillDay, $league['id']]);
         }
 
-        sync_set_state(['live' => sync_has_live($now) ? 1 : 0, 'last_error' => '']);
+        sync_mark_live($now);
+        sync_set_state(['last_error' => '']);
         return $stats;
     } catch (Throwable $e) {
         sync_set_state(['last_error' => date('d/m H:i') . ' ' . mb_substr($e->getMessage(), 0, 200)]);
@@ -354,6 +401,179 @@ function sync_run(string $mode): array
     } finally {
         $pdo->query("SELECT RELEASE_LOCK('bolao_sync')");
     }
+}
+
+/**
+ * O que fazer em cada liga nesta execução: código => ['full' => bool, 'backfill' => bool].
+ * Rápida (página padrão e dias sem placar): a cada 5 min (1 min com jogo ao vivo), só para ligas com jogo
+ * entre 3 h atrás e 36 h à frente, com placar atrasado, ou nunca sincronizadas.
+ * Completa: a cada 6 h por liga, no máximo SYNC_FULL_PER_RUN por vez, as mais antigas primeiro.
+ * Começo da temporada: uma liga por vez, até cobrir tudo. Liga que falhou espera 2, 4, 8... até 60 min.
+ */
+function sync_plan(array $leagues, string $mode, int $now): array
+{
+    if (!$leagues) {
+        return [];
+    }
+    if ($mode === 'full') {
+        return array_map(fn () => ['full' => true, 'backfill' => true], $leagues);
+    }
+
+    $stmt = db()->prepare(
+        'SELECT DISTINCT league_id FROM matches m
+         WHERE ' . not_void_sql('m') . ' AND (
+             m.kickoff_at BETWEEN ? AND ?
+             OR (m.home_score IS NULL AND m.external_id IS NOT NULL AND m.kickoff_at BETWEEN ? AND ?)
+         )'
+    );
+    $stmt->execute([
+        date('Y-m-d H:i:s', $now - 3 * 3600), date('Y-m-d H:i:s', $now + 36 * 3600),
+        date('Y-m-d H:i:s', $now - 10 * 86400), date('Y-m-d H:i:s', $now),
+    ]);
+    $active = array_flip(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)));
+
+    $plan = [];
+    $fullQueue = [];
+    $backfillQueue = [];
+    $backfillBefore = espn_day($now - SYNC_WINDOW_BEFORE - 2 * 86400);
+    foreach ($leagues as $code => $l) {
+        $failures = (int) $l['sync_failures'];
+        if ($failures > 0 && $now - (int) $l['synced_quick_at'] < min(2 ** $failures, 60) * 60) {
+            continue; // esperando depois de falhar
+        }
+        $every = (int) $l['has_live'] ? SYNC_LIVE_EVERY : SYNC_IDLE_EVERY;
+        $neverSynced = (int) $l['synced_quick_at'] === 0;
+        if ($now - (int) $l['synced_quick_at'] >= $every && ($neverSynced || isset($active[$l['id']]))) {
+            $plan[$code] = ['full' => false, 'backfill' => false];
+        }
+        if ($mode === 'auto' && $now - (int) $l['synced_full_at'] >= SYNC_FULL_EVERY) {
+            $fullQueue[$code] = (int) $l['synced_full_at'];
+        }
+        if ($mode === 'auto' && ($l['backfill_day'] === null || $l['backfill_day'] < $backfillBefore)) {
+            $backfillQueue[$code] = (string) $l['backfill_day'];
+        }
+    }
+    asort($fullQueue);
+    foreach (array_slice(array_keys($fullQueue), 0, SYNC_FULL_PER_RUN) as $code) {
+        $plan[$code] = ['full' => true, 'backfill' => false];
+    }
+    asort($backfillQueue);
+    foreach (array_slice(array_keys($backfillQueue), 0, 1) as $code) {
+        $plan[$code] = ['full' => $plan[$code]['full'] ?? false, 'backfill' => true];
+    }
+    return $plan;
+}
+
+/**
+ * Busca agora a página padrão de uma liga recém-escolhida num bolão (uma consulta), para os jogos
+ * aparecerem logo. O resto da tabela vem nas próximas sincronizações (synced_full_at = 0).
+ */
+function sync_league_now(int $leagueId): bool
+{
+    $pdo = db();
+    if ((int) $pdo->query("SELECT GET_LOCK('bolao_sync', 0)")->fetchColumn() !== 1) {
+        return false; // a sincronização em andamento (ou a próxima) cuida dela
+    }
+    try {
+        sync_migrate();
+        $stmt = $pdo->prepare('SELECT * FROM leagues WHERE id = ? AND external_id IS NOT NULL AND external_id <> \'\'');
+        $stmt->execute([$leagueId]);
+        $league = $stmt->fetch();
+        if (!$league) {
+            return false;
+        }
+        $league['id'] = (int) $league['id'];
+        $league['slug'] = $league['external_id'];
+        $league['cup'] = $league['kind'] === 'copa';
+        $board = espn_fetch_many(['b' => ESPN_BASE . $league['slug'] . '/scoreboard'])['b'];
+        if ($board === null) {
+            return false;
+        }
+        sync_league_info($league['id'], $board);
+        $stages = $league['cup'] ? ($board['leagues'][0]['calendar'][0]['entries'] ?? []) : [];
+        sync_save_events($league['id'], $board['events'] ?? [], $stages);
+        sync_number_league($league, $board);
+        return true;
+    } finally {
+        $pdo->query("SELECT RELEASE_LOCK('bolao_sync')");
+    }
+}
+
+/** Início e fim da temporada atual da liga, pela página padrão da ESPN. [início, fim] em timestamp. */
+function sync_season_window(array $board): array
+{
+    $season = $board['leagues'][0]['season'] ?? [];
+    $start = isset($season['startDate']) ? strtotime($season['startDate']) : false;
+    $end = isset($season['endDate']) ? strtotime($season['endDate']) : false;
+    $year = (int) ($season['year'] ?? date('Y'));
+    return [$start ?: mktime(0, 0, 0, 1, 1, $year), $end ?: mktime(0, 0, 0, 1, 1, $year + 1)];
+}
+
+/**
+ * Dias da tabela completa: de 7 dias atrás a 35 à frente. Nas ligas, só os dias do calendário com jogos;
+ * nas copas, todos os dias dentro das fases que cruzam a janela.
+ */
+function sync_window_days(array $league, array $board, int $now): array
+{
+    return sync_days_between($league, $board, $now - SYNC_WINDOW_BEFORE, $now + SYNC_WINDOW_AFTER);
+}
+
+/**
+ * Dias que faltam do começo da temporada até o início da janela da tabela completa (depois de
+ * leagues.backfill_day). Nas copas, a partir do começo da fase em andamento 7 dias atrás.
+ * Devolve [dias em ordem, dia até onde fica coberto quando todos forem buscados].
+ */
+function sync_backfill_days(array $league, array $board, int $now): array
+{
+    [$seasonStart] = sync_season_window($board);
+    $until = $now - SYNC_WINDOW_BEFORE;
+    $from = $seasonStart;
+    if ($league['cup']) {
+        foreach ($board['leagues'][0]['calendar'][0]['entries'] ?? [] as $stage) {
+            $s = strtotime($stage['startDate'] ?? '');
+            $e = strtotime($stage['endDate'] ?? '');
+            if ($s && $e && $s <= $until && $until < $e) {
+                $from = max($from, $s);
+            }
+        }
+    }
+    $days = sync_days_between($league, $board, $from, $until);
+    $after = (string) ($league['backfill_day'] ?? '');
+    $days = array_values(array_filter($days, fn ($d) => $d > $after));
+    return [$days, espn_day($until)];
+}
+
+/** Dias (formato da ESPN) com jogos possíveis entre dois horários, em ordem. */
+function sync_days_between(array $league, array $board, int $from, int $to): array
+{
+    $days = [];
+    if ($league['cup']) {
+        $stages = $board['leagues'][0]['calendar'][0]['entries'] ?? [];
+        for ($t = $from; $t <= $to; $t += 86400) {
+            foreach ($stages as $stage) {
+                if ($t >= strtotime($stage['startDate'] ?? '') && $t < strtotime($stage['endDate'] ?? '')) {
+                    $days[] = espn_day($t);
+                    break;
+                }
+            }
+        }
+        // Copa sem calendário de fases: todos os dias.
+        if (!$stages) {
+            for ($t = $from; $t <= $to; $t += 86400) {
+                $days[] = espn_day($t);
+            }
+        }
+    } else {
+        foreach ($board['leagues'][0]['calendar'] ?? [] as $day) {
+            $t = is_string($day) ? strtotime($day) : false;
+            if ($t && $t >= $from - 86400 && $t <= $to) {
+                $days[] = espn_day($t + 12 * 3600); // o calendário marca o começo do dia em UTC
+            }
+        }
+    }
+    $days = array_values(array_unique($days));
+    sort($days);
+    return $days;
 }
 
 /** Guarda o escudo da liga, o nome e o início da temporada atual, como vêm na página padrão da ESPN. */
@@ -371,7 +591,7 @@ function sync_league_info(int $leagueId, array $board): void
     )->execute([$logo, $label, $start ? date('Y-m-d', $start) : null, $leagueId]);
 }
 
-/** Dias (no formato da ESPN) de jogos que já deviam ter começado e ainda não têm placar. */
+/** Dias (no formato da ESPN) de jogos que já deviam ter começado e ainda não têm placar, por liga. */
 function sync_pending_days(int $now): array
 {
     $stmt = db()->prepare(
@@ -388,16 +608,22 @@ function sync_pending_days(int $now): array
     return $days;
 }
 
-/** Algum jogo começou há menos de 2h30 e ainda não terminou? */
-function sync_has_live(int $now): bool
+/** Marca em cada liga se há jogo ao vivo (começou há menos de 2h30 e ainda não terminou). */
+function sync_mark_live(int $now): void
 {
     $stmt = db()->prepare(
-        "SELECT COUNT(*) FROM matches
+        "SELECT DISTINCT league_id FROM matches
          WHERE external_id IS NOT NULL AND home_score IS NULL AND (status IS NULL OR status <> 'void')
            AND kickoff_at BETWEEN ? AND ?"
     );
     $stmt->execute([date('Y-m-d H:i:s', $now - 150 * 60), date('Y-m-d H:i:s', $now + 5 * 60)]);
-    return (int) $stmt->fetchColumn() > 0;
+    $live = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    db()->exec('UPDATE leagues SET has_live = 0 WHERE has_live = 1');
+    if ($live) {
+        db()->prepare('UPDATE leagues SET has_live = 1 WHERE id IN (' . placeholders($live) . ')')->execute($live);
+    }
+    sync_set_state(['live' => $live ? 1 : 0]);
 }
 
 /** Grava os jogos de uma liga e recalcula os pontos dos que acabaram de terminar. */
@@ -418,7 +644,7 @@ function sync_save_events(int $leagueId, array $events, array $stages): array
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     $update = $pdo->prepare(
-        'UPDATE matches SET round = COALESCE(?, round), round_label = ?, note = ?, home_team = ?, away_team = ?,
+        'UPDATE matches SET note = ?, home_team = ?, away_team = ?,
             kickoff_at = ?, home_score = ?, away_score = ?, live_home_score = ?, live_away_score = ?,
             status = ?, status_detail = ?, home_team_id = COALESCE(?, home_team_id), away_team_id = COALESCE(?, away_team_id)
          WHERE id = ?'
@@ -458,8 +684,9 @@ function sync_save_events(int $leagueId, array $events, array $stages): array
             continue;
         }
 
+        // A rodada e o nome da fase não mudam aqui: quem cuida é a numeração (sync_number_league).
         $update->execute([
-            $m['round'], $m['round_label'], $m['note'], $m['home_team'], $m['away_team'], $m['kickoff_at'],
+            $m['note'], $m['home_team'], $m['away_team'], $m['kickoff_at'],
             $m['home_score'], $m['away_score'], $m['live_home_score'], $m['live_away_score'],
             $m['status'], $m['status_detail'], $homeId, $awayId, $old['id'],
         ]);
@@ -512,8 +739,8 @@ function espn_parse_event(array $event, array $stages): ?array
     $roundLabel = null;
     foreach ($stages as $stage) {
         if ($start >= strtotime($stage['startDate']) && $start < strtotime($stage['endDate'])) {
-            $round = (int) $stage['value'];
-            $roundLabel = CUP_STAGES[$stage['label']] ?? $stage['label'];
+            $round = (int) $stage['value'] * 20 + 1; // provisório: sync_number_cup_rounds() numera de vez
+            $roundLabel = cup_stage_label((string) $stage['label']);
             break;
         }
     }
@@ -593,24 +820,166 @@ function sync_upsert_teams(array $teams): array
     return $map;
 }
 
-/** Busca no TheSportsDB as rodadas oficiais que ainda não estão completas no banco. */
-function sync_official_rounds(int $leagueId, int $season, int $limit): void
+/** Numera as rodadas de uma liga depois de gravar os jogos: copas por fase, ligas pela rodada oficial ou estimada. */
+function sync_number_league(array $league, array $board): void
 {
+    [$start, $end] = sync_season_window($board);
+    if ($league['cup']) {
+        sync_number_cup_rounds($league['id'], $board['leagues'][0]['calendar'][0]['entries'] ?? [], $start, $end);
+        return;
+    }
+    $season = (int) ($board['leagues'][0]['season']['year'] ?? date('Y', $start));
+    $tsdb = league_meta((string) $league['code'])['tsdb'] ?? null;
+    if ($tsdb) {
+        sync_official_rounds($league['id'], $season, $tsdb);
+    }
+    sync_number_rounds($league['id'], $start, $end, $tsdb ? $season : null);
+}
+
+/**
+ * Rodadas das copas: fase × 20 + sequência dentro da fase.
+ * - Fase com ida e volta (nota da ESPN): 1 = ida, 2 = volta ("Oitavas de final · ida").
+ * - Fase de grupos ou de liga: estimada pelas datas (sync_guess_rounds), "Fase de liga · Rodada 3".
+ * - Fase de jogo único: sequência 1 e o nome da fase.
+ * Os palpites apontam para o jogo (match_id), então renumerar não perde nada.
+ */
+function sync_number_cup_rounds(int $leagueId, array $stages, int $start, int $end): void
+{
+    if (!$stages) {
+        return;
+    }
+    $stmt = db()->prepare(
+        'SELECT id, round, round_label, kickoff_at, home_team, away_team, note, status FROM matches
+         WHERE league_id = ? AND external_id IS NOT NULL AND kickoff_at >= ? AND kickoff_at < ?
+         ORDER BY kickoff_at, id'
+    );
+    $stmt->execute([$leagueId, date('Y-m-d H:i:s', $start), date('Y-m-d H:i:s', $end)]);
+
+    $byStage = [];
+    foreach ($stmt->fetchAll() as $m) {
+        $t = strtotime($m['kickoff_at']);
+        foreach ($stages as $stage) {
+            if ($t >= strtotime($stage['startDate'] ?? '') && $t < strtotime($stage['endDate'] ?? '')) {
+                $byStage[(int) $stage['value']]['label'] = cup_stage_label((string) ($stage['label'] ?? ''));
+                $byStage[(int) $stage['value']]['matches'][] = $m;
+                break;
+            }
+        }
+    }
+
+    $update = db()->prepare('UPDATE matches SET round = ?, round_label = ? WHERE id = ?');
+    foreach ($byStage as $value => $group) {
+        $numbered = cup_stage_rounds($group['matches'], $group['label']);
+        foreach ($group['matches'] as $m) {
+            [$seq, $label] = $numbered[(int) $m['id']];
+            $round = $value * 20 + min(19, $seq);
+            if ((int) $m['round'] !== $round || (string) $m['round_label'] !== $label) {
+                $update->execute([$round, $label, $m['id']]);
+            }
+        }
+    }
+}
+
+/** Sequência e nome de cada jogo de uma fase de copa: id => [sequência, nome]. Ver sync_number_cup_rounds(). */
+function cup_stage_rounds(array $matches, string $label): array
+{
+    $out = [];
+    $legs = array_filter($matches, fn ($m) => in_array($m['note'], ['Jogo de ida', 'Jogo de volta'], true));
+    if ($legs) {
+        // Jogo sem nota numa fase de ida e volta: fica com a perna de data mais próxima.
+        $legTimes = [1 => [], 2 => []];
+        foreach ($legs as $m) {
+            $legTimes[$m['note'] === 'Jogo de volta' ? 2 : 1][] = strtotime($m['kickoff_at']);
+        }
+        foreach ($matches as $m) {
+            if ($m['note'] === 'Jogo de ida' || $m['note'] === 'Jogo de volta') {
+                $seq = $m['note'] === 'Jogo de volta' ? 2 : 1;
+            } else {
+                $t = strtotime($m['kickoff_at']);
+                $dist = fn (array $times) => $times ? min(array_map(fn ($x) => abs($x - $t), $times)) : PHP_INT_MAX;
+                $seq = $dist($legTimes[2]) < $dist($legTimes[1]) ? 2 : 1;
+            }
+            $out[(int) $m['id']] = [$seq, $label . ' · ' . ($seq === 2 ? 'volta' : 'ida')];
+        }
+        return $out;
+    }
+
+    $played = array_values(array_filter($matches, fn ($m) => ($m['status'] ?? null) !== 'void'));
+    $guess = count($played) >= 2 ? sync_guess_rounds($played) : [];
+    $many = $guess && max($guess) > 1;
+    foreach ($matches as $m) {
+        $seq = $guess[(int) $m['id']] ?? null;
+        if ($seq === null) {
+            // Adiado ou cancelado: a rodada do jogo disputado mais próximo em data.
+            $seq = 1;
+            $best = PHP_INT_MAX;
+            foreach ($played as $p) {
+                $d = abs(strtotime($p['kickoff_at']) - strtotime($m['kickoff_at']));
+                if ($d < $best && isset($guess[(int) $p['id']])) {
+                    $best = $d;
+                    $seq = $guess[(int) $p['id']];
+                }
+            }
+        }
+        $out[(int) $m['id']] = [$seq, $many ? $label . ' · Rodada ' . $seq : $label];
+    }
+    return $out;
+}
+
+/** Nome da fase em português ("Rd of 16" vira "Oitavas de final", "3rd Round" vira "3ª fase"). */
+function cup_stage_label(string $label): string
+{
+    if (isset(CUP_STAGES[$label])) {
+        return CUP_STAGES[$label];
+    }
+    if (preg_match('/^(\d+)(st|nd|rd|th) (Round|Stage)$/i', $label, $m)) {
+        return (int) $m[1] . 'ª fase';
+    }
+    return mb_substr($label, 0, 40);
+}
+
+/**
+ * Busca no TheSportsDB as rodadas oficiais que ainda não estão completas no banco.
+ * $tsdb: [id da liga no TheSportsDB, formato da temporada, nº de times] (ver LEAGUE_CATALOG).
+ * No máximo uma leva a cada 10 minutos somando todas as ligas; a leva continua de onde a anterior
+ * parou, para uma rodada que nunca vem completa não travar as outras.
+ */
+function sync_official_rounds(int $leagueId, int $season, array $tsdb): void
+{
+    $state = sync_state();
+    if (time() - (int) ($state['tsdb_at'] ?? 0) < 600) {
+        return;
+    }
+    [$tsdbId, $format, $teams] = $tsdb;
+    $rounds = $teams * 2 - 2;
+    $games = intdiv($teams, 2);
+
     $stmt = db()->prepare('SELECT round, COUNT(*) AS games FROM official_rounds WHERE league_id = ? AND season = ? GROUP BY round');
     $stmt->execute([$leagueId, $season]);
     $have = array_column($stmt->fetchAll(), 'games', 'round');
 
-    $urls = [];
-    for ($round = 1; $round <= TSDB_ROUNDS && count($urls) < $limit; $round++) {
-        if ((int) ($have[$round] ?? 0) < TSDB_GAMES_PER_ROUND) {
-            $urls[$round] = sprintf(TSDB_ROUND_URL, $season, $round);
+    $missing = [];
+    for ($round = 1; $round <= $rounds; $round++) {
+        if ((int) ($have[$round] ?? 0) < $games) {
+            $missing[] = $round;
         }
     }
-    // No máximo uma leva a cada 10 minutos, para não ser bloqueado se alguma rodada nunca vier completa.
-    if (!$urls || time() - (int) (sync_state()['tsdb_at'] ?? 0) < 600) {
+    if (!$missing) {
         return;
     }
-    sync_set_state(['tsdb_at' => time()]);
+    // Continua depois da última rodada buscada desta liga (cursor "liga:rodada").
+    $cursor = explode(':', (string) ($state['tsdb_cursor'] ?? ''));
+    $after = ((int) ($cursor[0] ?? 0) === $leagueId) ? (int) ($cursor[1] ?? 0) : 0;
+    $next = array_values(array_filter($missing, fn ($r) => $r > $after));
+    $pick = array_slice(array_merge($next, $missing), 0, TSDB_PER_RUN);
+    $pick = array_values(array_unique($pick));
+
+    $seasonText = $format === 'Y-Y' ? $season . '-' . ($season + 1) : (string) $season;
+    $urls = [];
+    foreach ($pick as $round) {
+        $urls[$round] = sprintf(TSDB_ROUND_URL, $tsdbId, $seasonText, $round);
+    }
+    sync_set_state(['tsdb_at' => time(), 'tsdb_cursor' => $leagueId . ':' . end($pick)]);
     sync_save_official_rounds($leagueId, $season, espn_fetch_many($urls));
 }
 
@@ -644,36 +1013,40 @@ function team_key(string $name): string
 }
 
 /**
- * Numera as rodadas do Brasileirão pela rodada oficial de cada confronto.
- * Jogo sem rodada oficial conhecida fica na rodada do jogo oficial mais próximo em data;
- * sem nenhuma rodada oficial, as rodadas são estimadas pela tabela (sync_guess_rounds).
+ * Numera as rodadas de uma liga (jogos da temporada atual, entre $start e $end).
+ * Com rodada oficial ($season do TheSportsDB): cada confronto recebe a sua; os demais ficam com a
+ * rodada estimada pela tabela (sync_guess_rounds), alinhada às oficiais já conhecidas. Sem nenhuma
+ * rodada oficial, vale só a estimativa.
  */
-function sync_number_rounds(int $leagueId, int $season): void
+function sync_number_rounds(int $leagueId, int $start, int $end, ?int $season): void
 {
     // Jogos adiados também recebem a rodada oficial, mas ficam fora das estimativas por data.
     $stmt = db()->prepare(
         'SELECT id, round, kickoff_at, home_team, away_team, status FROM matches
-         WHERE league_id = ? AND external_id IS NOT NULL
+         WHERE league_id = ? AND external_id IS NOT NULL AND kickoff_at >= ? AND kickoff_at < ?
          ORDER BY kickoff_at, id'
     );
-    $stmt->execute([$leagueId]);
-    $all = array_values(array_filter(
-        $stmt->fetchAll(),
-        fn ($m) => (int) substr($m['kickoff_at'], 0, 4) === $season
-    ));
+    $stmt->execute([$leagueId, date('Y-m-d H:i:s', $start), date('Y-m-d H:i:s', $end)]);
+    $all = $stmt->fetchAll();
+    if (!$all) {
+        return;
+    }
     $matches = array_values(array_filter($all, fn ($m) => ($m['status'] ?? null) !== 'void'));
 
-    $stmt = db()->prepare('SELECT home_key, away_key, round FROM official_rounds WHERE league_id = ? AND season = ?');
-    $stmt->execute([$leagueId, $season]);
     $official = [];
-    foreach ($stmt->fetchAll() as $row) {
-        $official[$row['home_key'] . '|' . $row['away_key']] = (int) $row['round'];
+    if ($season !== null) {
+        $stmt = db()->prepare('SELECT home_key, away_key, round FROM official_rounds WHERE league_id = ? AND season = ?');
+        $stmt->execute([$leagueId, $season]);
+        foreach ($stmt->fetchAll() as $row) {
+            $official[$row['home_key'] . '|' . $row['away_key']] = (int) $row['round'];
+        }
     }
+    $keyOf = official_key_matcher(array_keys($official));
 
     $rounds = [];
     $known = []; // [horário, rodada] dos jogos disputados com rodada oficial
     foreach ($all as $m) {
-        $key = team_key($m['home_team']) . '|' . team_key($m['away_team']);
+        $key = $keyOf($m['home_team']) . '|' . $keyOf($m['away_team']);
         if (isset($official[$key])) {
             $rounds[(int) $m['id']] = $official[$key];
             if (($m['status'] ?? null) !== 'void') {
@@ -682,13 +1055,41 @@ function sync_number_rounds(int $leagueId, int $season): void
         }
     }
 
-    if (!$known) {
-        $rounds = sync_guess_rounds($matches);
-    } else {
-        foreach ($matches as $m) {
-            if (isset($rounds[(int) $m['id']])) {
-                continue;
-            }
+    // Sem rodada oficial: vale a estimativa pela tabela (sync_guess_rounds), alinhada com as rodadas
+    // oficiais já conhecidas. Cada grupo estimado com algum jogo oficial vira a rodada oficial mais comum
+    // nele; os outros seguem a diferença (oficial − estimada) do grupo com dados mais próximo.
+    // Jogos remarcados (a mais de 4 dias da mediana da sua rodada oficial) não votam.
+    $guess = sync_guess_rounds($matches);
+    $timesOf = [];
+    foreach ($matches as $m) {
+        if (isset($rounds[(int) $m['id']])) {
+            $timesOf[$rounds[(int) $m['id']]][] = strtotime($m['kickoff_at']);
+        }
+    }
+    $median = [];
+    foreach ($timesOf as $r => $times) {
+        sort($times);
+        $median[$r] = $times[intdiv(count($times), 2)];
+    }
+    $votes = [];
+    foreach ($matches as $m) {
+        $id = (int) $m['id'];
+        if (isset($rounds[$id], $guess[$id]) && abs(strtotime($m['kickoff_at']) - $median[$rounds[$id]]) <= 4 * 86400) {
+            $votes[$guess[$id]][$rounds[$id]] = ($votes[$guess[$id]][$rounds[$id]] ?? 0) + 1;
+        }
+    }
+    $groupRound = [];
+    foreach ($votes as $g => $counts) {
+        arsort($counts);
+        $groupRound[$g] = (int) array_key_first($counts);
+    }
+    foreach ($all as $m) {
+        $id = (int) $m['id'];
+        if (isset($rounds[$id])) {
+            continue;
+        }
+        if (!isset($guess[$id])) {
+            // Adiado ou cancelado sem rodada oficial: a do jogo conhecido mais próximo em data.
             $time = strtotime($m['kickoff_at']);
             $best = null;
             foreach ($known as [$knownTime, $knownRound]) {
@@ -696,17 +1097,72 @@ function sync_number_rounds(int $leagueId, int $season): void
                     $best = [$knownTime, $knownRound];
                 }
             }
-            $rounds[(int) $m['id']] = $best[1];
+            if ($best !== null) {
+                $rounds[$id] = $best[1];
+            }
+            continue;
         }
+        $g = $guess[$id];
+        if (isset($groupRound[$g])) {
+            $rounds[$id] = $groupRound[$g];
+            continue;
+        }
+        $offset = 0;
+        $nearest = null;
+        foreach ($groupRound as $og => $or) {
+            if ($nearest === null || abs($og - $g) < abs($nearest - $g)) {
+                $nearest = $og;
+                $offset = $or - $og;
+            }
+        }
+        $rounds[$id] = max(1, $g + $offset);
     }
 
     $stored = array_column($all, 'round', 'id');
     $update = db()->prepare('UPDATE matches SET round = ? WHERE id = ?');
     foreach ($rounds as $id => $round) {
-        if ((int) $stored[$id] !== $round) {
+        if (isset($stored[$id]) && (int) $stored[$id] !== $round) {
             $update->execute([$round, $id]);
         }
     }
+}
+
+/**
+ * Função que converte o nome do time da ESPN na chave usada pelo TheSportsDB. Primeiro team_key();
+ * se essa chave não existe lá, procura uma única chave parecida, sem "and", "fc" e "afc"
+ * ("AFC Bournemouth" = "Bournemouth", "Brighton & Hove Albion" = "Brighton and Hove Albion").
+ */
+function official_key_matcher(array $pairKeys): callable
+{
+    $teams = [];
+    foreach ($pairKeys as $pair) {
+        foreach (explode('|', $pair) as $k) {
+            $teams[$k] = true;
+        }
+    }
+    $loose = fn (string $k) => str_replace(['afc', 'fc', 'and'], '', $k);
+    $looseTeams = [];
+    foreach (array_keys($teams) as $k) {
+        $looseTeams[$k] = $loose($k);
+    }
+    $cache = [];
+    return function (string $name) use ($teams, $looseTeams, $loose, &$cache): string {
+        $key = team_key($name);
+        if (isset($teams[$key]) || !$teams) {
+            return $key;
+        }
+        if (!isset($cache[$key])) {
+            $lk = $loose($key);
+            $found = [];
+            foreach ($looseTeams as $official => $lo) {
+                if ($lo === $lk || (strlen($lo) >= 4 && strlen($lk) >= 4 && (strpos($lo, $lk) !== false || strpos($lk, $lo) !== false))) {
+                    $found[] = $official;
+                }
+            }
+            $cache[$key] = count($found) === 1 ? $found[0] : $key;
+        }
+        return $cache[$key];
+    };
 }
 
 /**
@@ -808,7 +1264,7 @@ function espn_fetch_many(array $urls): array
             curl_setopt_array($handle, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT => 10,
-                CURLOPT_TIMEOUT        => 25,
+                CURLOPT_TIMEOUT        => 12,
                 CURLOPT_ENCODING       => '',
                 CURLOPT_USERAGENT      => 'Mozilla/5.0 (Bolao)',
             ]);
